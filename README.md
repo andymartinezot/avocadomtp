@@ -1,51 +1,322 @@
-# AvocadoMTP
+# 🥑 AvocadoMTP
 
-Transfer files between macOS and Android phones over USB, the way Linux does it.
-No SD-card swapping and no kernel extensions.
+**Android ↔ macOS file transfer over USB, the way Linux does it.**
+Plug the phone in and its storage appears in Finder, with drag and drop, Quick Look and `cp`/`rsync`
+from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 
-Android phones expose their storage over **MTP (Media Transfer Protocol)**, an extension of PTP.
-macOS doesn't ship an MTP stack, so AvocadoMTP implements one in user space on top of libusb
-(the same approach OpenMTP and MacDroid take).
+> 📊 **Interactive version:** open [`docs/index.html`](docs/index.html) (or the project's GitHub Pages site)
+> for clickable architecture diagrams, animated transfer flows and the performance dashboard.
 
-## Build
+| | |
+|---|---|
+| **Protocol** | MTP (Media Transfer Protocol), the PTP extension Android uses for USB file access |
+| **How** | A user-space MTP stack on libusb (the approach OpenMTP and MacDroid take) |
+| **Finder** | Each phone storage becomes its own disk, mounted through [FUSE-T](https://www.fuse-t.org/) |
+| **Tested on** | macOS 26 (Apple Silicon) with a Retroid Pocket 6 (Android, 100 GB internal + 476 GB SD) |
+
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Transfer flows](#transfer-flows)
+- [Performance dashboard](#performance-dashboard)
+- [CLI reference](#cli-reference)
+- [Finder volumes](#finder-volumes)
+- [Project layout](#project-layout)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
+
+---
+
+## Quick start
 
 ```sh
-brew install go libusb
+brew install go libusb            # build dependencies
+brew install --cask fuse-t        # Finder volumes (free, no kernel extension)
 go build -o bin/avocado ./cmd/avocado
+./bin/avocado daemon install      # start at login; mounts the phone in Finder
 ```
 
-## Use
+Then:
 
-Unlock the phone, plug it in, and pick **File transfer** in the phone's USB notification.
+1. Unlock the phone, plug it in, and pick **File transfer** in its USB notification.
+2. Turn on **System Settings → General → Login Items & Extensions → File System Extensions → fuse-t**
+   so the volumes mount as local disks (otherwise FUSE-T falls back to a local NFS share).
+3. Open Finder: the phone's storages appear under **Locations** (e.g. `Retroid Pocket 6`, `Retroid6`).
+
+---
+
+## How it works
+
+macOS has no MTP stack, so Finder can't see Android phones. AvocadoMTP speaks MTP itself over libusb,
+and a small background daemon owns the USB connection and serves both the Finder volumes and the CLI.
+
+```mermaid
+flowchart LR
+    subgraph Mac["🍎 macOS"]
+        Finder["Finder · Quick Look · Terminal apps"]
+        CLI["avocado CLI"]
+        subgraph Kernel["Kernel / system"]
+            VFS["VFS"]
+            FSKit["FUSE-T<br/>(FSKit backend, or local NFS)"]
+        end
+        subgraph Daemon["avocado daemon (LaunchAgent)"]
+            FUSEFS["fusefs<br/>one FS per storage"]
+            Sock["Unix socket server"]
+            VFSC["vfs<br/>path ↔ handle cache"]
+            MTP["mtp session<br/>chunked transfers"]
+            USBX["usbx (libusb)<br/>+ hotplug"]
+        end
+    end
+    Phone["📱 Android phone<br/>MTP responder"]
+
+    Finder --> VFS --> FSKit --> FUSEFS
+    CLI -->|framed JSON| Sock
+    FUSEFS --> VFSC
+    Sock --> VFSC
+    VFSC --> MTP --> USBX
+    USBX <-->|USB bulk + interrupt| Phone
+```
+
+### Layers
+
+| Layer | Package | What it does |
+|---|---|---|
+| USB | `internal/usbx` | Finds the MTP interface, claims it (stopping `ptpcamerad`), bulk I/O, USB hotplug events |
+| Wire format | `internal/ptp` | Byte-level containers and datasets (DeviceInfo, StorageInfo, ObjectInfo, ObjectPropList) |
+| Protocol | `internal/mtp` | Transactions (command → data → response), streaming, Android extensions, counters |
+| Paths | `internal/vfs` | `/Storage/dir/file` ↔ object handles, TTL directory cache, Unicode-normalized lookups |
+| Sharing | `internal/daemon` | One USB owner for every client; Unix-socket protocol; LaunchAgent install |
+| Finder | `internal/fusefs` | FUSE file system per storage: read-ahead, write staging, macOS-metadata shadow store |
+| Memory | `internal/bufpool` | Pooled transfer buffers (64 KiB–16 MiB) |
+| Entry point | `cmd/avocado` | CLI, interactive shell, `avocado daemon` |
+
+### One MTP transaction
+
+Every operation is a command, an optional data phase and a response, on the USB bulk endpoints:
+
+```mermaid
+sequenceDiagram
+    participant H as Mac (initiator)
+    participant P as Phone (responder)
+    H->>P: Command container (op code, tx id, ≤5 params)
+    opt data phase (either direction)
+        H-->>P: Data container (e.g. SendObject)
+        P-->>H: Data container (e.g. GetPartialObject64)
+    end
+    P->>H: Response container (OK or error code)
+```
+
+Files are **objects** identified by 32-bit handles inside **storages** (internal memory, SD card).
+There are no paths in MTP; `vfs` builds them by listing folders.
+
+---
+
+## Transfer flows
+
+### Copying a file **to** the phone (Finder drag and drop)
+
+MTP cannot modify a file in place, so writes are staged on the Mac and uploaded once, when the file is closed.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F as Finder
+    participant FS as fusefs
+    participant T as Staging file (Mac SSD)
+    participant D as daemon session
+    participant P as Phone
+    F->>FS: create("photo.jpg")
+    FS->>T: new unlinked temp file
+    loop every chunk
+        F->>FS: write(offset, data)
+        FS->>T: write at offset
+    end
+    F->>FS: flush / fsync (many times)
+    Note over FS: no upload yet: syncing the whole<br/>file on every flush would be quadratic
+    F->>FS: release (file closed)
+    FS->>D: upload (chunked 8 MiB edit-writes)
+    D->>P: SendObjectInfo + BeginEdit / SendPartialObject… / EndEdit
+    Note over D,P: other requests run between chunks,<br/>so browsing never freezes
+    P-->>FS: new object handle
+```
+
+Replacing an existing file uploads under a temporary name first, then swaps, so a failed upload never
+destroys the original.
+
+### Reading a file **from** the phone (adaptive read-ahead)
+
+```mermaid
+sequenceDiagram
+    participant K as Kernel / app
+    participant FS as fusefs handle
+    participant P as Phone
+    K->>FS: read(0, 1 MiB)
+    FS->>P: GetPartialObject64(0, 1 MiB)
+    Note right of FS: random access (thumbnails, EXIF)<br/>stays small: no wasted USB traffic
+    loop sequential reads
+        K->>FS: read(next offset, 1 MiB)
+        FS->>P: GetPartialObject64(offset, window)
+        Note right of FS: window doubles on each sequential<br/>fetch: 128 KiB → … → 8 MiB
+    end
+    K->>FS: read(…)
+    Note right of FS: served from the 8 MiB block:<br/>one USB transaction per 8 reads<br/>(buffers are pooled)
+```
+
+### Daemon lifecycle
+
+The daemon wakes only on USB hotplug events: no polling, so the phone's MTP service can sleep.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Waiting: daemon starts
+    Waiting --> Connecting: USB device arrived
+    Connecting --> Waiting: no MTP phone / locked
+    Connecting --> Mounted: session open → mount every storage
+    Mounted --> Mounted: requests (Finder, CLI) share one session
+    Mounted --> Reconnecting: transfer aborted / USB error
+    Reconnecting --> Mounted: reopen session (2 s later)
+    Mounted --> Waiting: USB device left → unmount
+    Mounted --> [*]: SIGTERM → unmount, release phone
+```
+
+---
+
+## Performance dashboard
+
+Measured on a MacBook (Apple Silicon, macOS 26) with a Retroid Pocket 6 over **USB 2.0 (480 Mb/s)**.
+About 40 MiB/s is the practical MTP ceiling on that link.
+
+### Throughput
+
+| Transfer | Speed | Integrity |
+|---|---|---|
+| CLI push, 2 GiB | **40.6 MiB/s** | SHA-256 identical |
+| CLI pull, 2 GiB (through daemon) | **35.9 MiB/s** | SHA-256 identical |
+| Finder volume → Mac, 1 GiB | **33 MiB/s** | SHA-256 identical |
+| Mac → Finder volume, 500 MB | **36 MiB/s** | SHA-256 identical |
+
+```mermaid
+xychart-beta
+    title "Throughput (MiB/s), USB 2.0 ceiling ≈ 40"
+    x-axis ["CLI push", "CLI pull", "Volume read", "Volume write"]
+    y-axis "MiB/s" 0 --> 45
+    bar [40.6, 35.9, 33, 36]
+```
+
+### Optimization results
+
+| Workload | Before | After | Change |
+|---|---|---|---|
+| Read 64 KiB headers of 40 photos (Finder thumbnails) | 6.79 s · 200 MB over USB | **2.33 s · 42 MB** | 3× faster, 5× less USB traffic |
+| Copy 1 GiB from a volume | 2.8 s CPU + 1 GiB written to SSD | **1.9 s CPU, no SSD writes** | −32% CPU |
+| Idle phone, MTP transactions per minute | ~20 (polling every 3 s) | **0** | phone can sleep |
+| No phone connected | every USB device opened every 3 s | **nothing until a hotplug event** | no wakeups |
+| Folder listing while a 2 GiB copy runs | 67 s (blocked) | **0.3–0.5 s** | chunked transfers |
+| Daemon memory (idle / during 1 GiB copy) | | **≈10 MB / ≈36 MB RSS** | |
+
+```mermaid
+xychart-beta
+    title "Finder-style header reads of 40 photos: data over USB (MB)"
+    x-axis ["Before", "After"]
+    y-axis "MB" 0 --> 210
+    bar [200, 42]
+```
+
+What made the difference:
+
+- **Lazy write staging:** FUSE-T's FSKit backend opens every file read-write; files are now only
+  downloaded for staging when the first write actually arrives.
+- **Adaptive read-ahead:** starts at 128 KiB and doubles on sequential reads up to 8 MiB.
+- **USB hotplug** instead of polling; a 60 s safety check only runs while no phone is connected.
+- **Pooled buffers** and zero-copy partial reads.
+- **Chunked transfers** (8 MiB) so one copy never blocks the other volume or the CLI.
+
+---
+
+## CLI reference
 
 ```sh
-avocado devices
-avocado info
-avocado ls -l "/Internal shared storage/DCIM/Camera"
-avocado pull -r "/Internal shared storage/DCIM/Camera" ~/Pictures/phone
-avocado push -r ~/Music "/SD card/Music"
-avocado mkdir -p "/SD card/Backups/2026"
-avocado mv "/SD card/a.txt" "/SD card/Backups/b.txt"
-avocado rm -r "/SD card/Old"
-avocado shell            # interactive: cd, ls, pull, push, lcd, lls ...
+avocado devices                                   # list connected MTP devices
+avocado info                                      # model, serial, storages, free space
+avocado ls -l "/Retroid Pocket 6/DCIM/Camera"
+avocado pull -r "/Retroid Pocket 6/DCIM/Camera" ~/Pictures/phone
+avocado push -r ~/Music "/Retroid6/Music"
+avocado mkdir -p "/Retroid6/Backups/2026"
+avocado mv "/Retroid6/a.txt" "/Retroid6/Backups/b.txt"
+avocado rm -r "/Retroid6/Old"
+avocado shell                                     # interactive: cd, ls, pull, push, lcd, lls …
+
+avocado daemon [--no-mount]                       # run in the foreground
+avocado daemon install | uninstall                # start at login (LaunchAgent) / remove
+avocado daemon status                             # phone, storages, transfer counters
 ```
 
-Close other MTP apps first (Android File Transfer, OpenMTP, MacDroid). Image Capture's
-`ptpcamerad` is stopped automatically when it grabs the phone.
+- Remote paths start with the storage name. The internal storage is named after the phone
+  (`Retroid Pocket 6`); the phone's own description (`Internal shared storage`) works too.
+- Flags may appear anywhere; use `--` before a path that starts with `-`. `-d SERIAL` picks a device.
+- When the daemon runs, the CLI goes through it; `--direct` talks to USB instead.
+- In the shell, Ctrl-C cancels a transfer and, at the prompt, quits.
 
-## Layout
+---
 
-| Package          | Role |
-|------------------|------|
-| `internal/usbx`  | cgo/libusb: find the MTP interface, claim it, bulk/interrupt I/O |
-| `internal/ptp`   | byte-level containers and datasets (DeviceInfo, StorageInfo, ObjectInfo, PropList) |
-| `internal/mtp`   | session and transactions (command → data → response), file operations |
-| `internal/vfs`   | maps `/Storage/dir/file` paths to MTP handles, with a directory cache |
-| `cmd/avocado`    | CLI and interactive shell |
+## Finder volumes
 
-`go test ./...` runs everything against an in-memory fake MTP device, so no phone is needed.
+| Behavior | Why |
+|---|---|
+| One volume per storage, in `~/AvocadoMTP/<name>` | `/Volumes` is root-only; Finder still lists them as disks with eject buttons |
+| Writes appear on the phone when the file is closed | MTP can't edit in place; files are staged on the Mac first |
+| `._*`, `.DS_Store` stay on the Mac | kept in memory, never written to the phone |
+| "Move to Trash" deletes immediately | phones have no trash; `.Trashes` is refused on purpose |
+| Spotlight doesn't index the phone | the volume reports `.metadata_never_index` |
+| Names with accents work (`año 🥑.bin`) | macOS (NFD) and Android (NFC) names are normalized |
+
+`AVOCADO_FUSE_DEBUG=1` logs every file system call; the LaunchAgent logs to `~/Library/Logs/avocado.log`.
+`avocado daemon install` copies the binary to `~/Library/Application Support/AvocadoMTP/bin/`:
+launchd agents can't run from privacy-protected folders such as `~/Documents`.
+
+---
+
+## Project layout
+
+```
+cmd/avocado/          CLI, shell, daemon command
+internal/usbx/        libusb wrapper + hotplug (cgo)
+internal/ptp/         PTP/MTP codec
+internal/mtp/         session, operations; mtptest/ = in-memory fake phone
+internal/vfs/         path resolution and directory cache
+internal/remote/      interface shared by direct USB and daemon clients
+internal/device/      opening the USB phone (with stuck-device recovery)
+internal/daemon/      daemon server, socket protocol, client, LaunchAgent
+internal/fusefs/      FUSE file system, mount manager, metadata shadow store
+internal/errcode/     MTP/USB errors → POSIX errno
+internal/bufpool/     pooled transfer buffers
+docs/index.html       interactive architecture & performance page
+```
+
+`go test -race ./...` runs everything against an in-memory fake MTP device, so no phone is needed.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `no MTP device found` | Unlock the phone, use a data cable, choose **File transfer** in the USB notification |
+| `claim MTP interface: LIBUSB_ERROR_ACCESS` | Another app holds the phone (the daemon, Android File Transfer, OpenMTP, MacDroid) |
+| `… is not responding` | Unplug and reconnect, or toggle the phone's USB mode |
+| Volumes appear under a "fuse-t" server | Enable fuse-t in File System Extensions (see Quick start) |
+| Daemon doesn't start after a rebuild | Run `avocado daemon install` again (it copies the new binary) |
+
+---
 
 ## Roadmap
 
 - [x] MTP engine + CLI
-- [ ] Finder integration via an FSKit volume (Swift extension linking the Go engine as a C archive)
+- [x] Daemon shared by CLI and Finder; chunked transfers so browsing never freezes
+- [x] Finder volumes via FUSE-T, named after the device
+- [x] Resource optimization: hotplug, adaptive read-ahead, lazy staging, buffer pools
+- [ ] Menu bar app: mounts, paths, live transfers and speed, eject
+- [ ] Distribution: Homebrew tap, then a signed `.app` in a DMG
