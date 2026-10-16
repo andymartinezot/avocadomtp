@@ -1,0 +1,3 @@
+bin/
+*.avocado-part
+.DS_Store
