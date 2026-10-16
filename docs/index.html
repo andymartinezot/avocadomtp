@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AvocadoMTP Architecture</title>
+<meta name="description" content="How AvocadoMTP brings Android phones to the macOS Finder over USB: interactive architecture, transfer flows and performance dashboard.">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f5f1;
+  --surface: #fcfcfb;
+  --surface-2: #efeee9;
+  --border: #dddbd3;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #7a7974;
+  --accent: #3f7d3a;
+  --accent-soft: #e4efe1;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --node: #ffffff;
+  --node-hi: #e4efe1;
+  --edge: #a9a79f;
+  --edge-hi: #3f7d3a;
+  --grid: #e7e5df;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --border: #34332f;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --muted: #8e8d86;
+    --accent: #8cc67f;
+    --accent-soft: #24331f;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --node: #1f1f1d;
+    --node-hi: #24331f;
+    --edge: #5b5a55;
+    --edge-hi: #8cc67f;
+    --grid: #2b2a27;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --border: #34332f;
+  --text: #f0efec;
+  --text-2: #c3c2b7;
+  --muted: #8e8d86;
+  --accent: #8cc67f;
+  --accent-soft: #24331f;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --node: #1f1f1d;
+  --node-hi: #24331f;
+  --edge: #5b5a55;
+  --edge-hi: #8cc67f;
+  --grid: #2b2a27;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { overflow-x: hidden; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px 64px; }
+header.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 18px 0; border-bottom: 1px solid var(--border); margin-bottom: 28px;
+}
+.brand { font-weight: 650; font-size: 17px; letter-spacing: -.01em; }
+.brand span { margin-right: 6px; }
+.theme { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.theme button {
+  background: var(--surface); color: var(--text-2); border: 0; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.theme button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); }
+h1 { font-size: 34px; line-height: 1.15; letter-spacing: -.02em; margin: 8px 0 10px; }
+h2 { font-size: 22px; letter-spacing: -.01em; margin: 48px 0 6px; }
+h3 { font-size: 15px; margin: 0 0 4px; }
+p.lede { color: var(--text-2); font-size: 17px; max-width: 760px; margin: 0 0 22px; }
+p.sub { color: var(--text-2); margin: 0 0 18px; max-width: 760px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow); padding: 18px;
+}
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 30px; font-weight: 650; letter-spacing: -.02em; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.tile .d { color: var(--text-2); font-size: 13px; }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+pre { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0; }
+
+/* architecture */
+.arch { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+.arch svg { width: 100%; height: auto; display: block; }
+.node rect { fill: var(--node); stroke: var(--border); stroke-width: 1.5; transition: fill .2s, stroke .2s; }
+.node text { fill: var(--text); font-size: 13px; font-weight: 600; pointer-events: none; }
+.node text.s { fill: var(--muted); font-size: 11px; font-weight: 400; }
+.node { cursor: pointer; }
+.node:hover rect, .node:focus rect { stroke: var(--accent); }
+.node:focus { outline: none; }
+.node.on rect { fill: var(--node-hi); stroke: var(--accent); stroke-width: 2; }
+.group rect { fill: none; stroke: var(--border); stroke-dasharray: 4 4; }
+.group text { fill: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.edge { stroke: var(--edge); stroke-width: 2; fill: none; transition: stroke .2s; }
+.edge.on { stroke: var(--edge-hi); stroke-width: 3; }
+.detail h3 { font-size: 16px; }
+.detail .pkg { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--accent); }
+.detail ul { margin: 8px 0 0; padding-left: 18px; color: var(--text-2); }
+.detail li { margin: 4px 0; }
+
+/* flows */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.tabs button, .ctl button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px;
+  padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.flow { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; }
+.lanes { position: relative; }
+.lanes svg { width: 100%; height: auto; display: block; }
+.lane text { fill: var(--text); font-size: 12px; font-weight: 600; }
+.lane line { stroke: var(--grid); stroke-width: 2; }
+.msg line { stroke: var(--edge); stroke-width: 2; }
+.msg text { fill: var(--text-2); font-size: 11.5px; }
+.msg { opacity: .4; transition: opacity .25s; }
+.msg.done { opacity: .7; }
+.msg.cur { opacity: 1; }
+.msg.cur line { stroke: var(--accent); stroke-width: 3; }
+.msg.cur text { fill: var(--text); font-weight: 600; }
+.steptext .n { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.steptext p { margin: 6px 0 0; color: var(--text-2); }
+.ctl { display: flex; gap: 6px; margin-top: 14px; }
+.progress { height: 4px; background: var(--surface-2); border-radius: 4px; margin-top: 12px; overflow: hidden; }
+.progress div { height: 100%; background: var(--accent); width: 0; transition: width .25s; }
+
+/* charts */
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.chart h3 { margin-bottom: 2px; }
+.chart .unit { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.legend { display: flex; gap: 16px; color: var(--text-2); font-size: 13px; margin: 6px 0 14px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.axis text { fill: var(--muted); font-size: 11px; }
+.axis line { stroke: var(--grid); }
+.bar { transition: opacity .15s; }
+.bar:hover { opacity: .85; }
+.lbl { fill: var(--text); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ref { stroke: var(--text-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.reftext { fill: var(--text-2); font-size: 11px; }
+.tip {
+  position: fixed; pointer-events: none; background: var(--text); color: var(--bg); padding: 6px 9px;
+  border-radius: 7px; font-size: 12px; opacity: 0; transition: opacity .1s; z-index: 10; max-width: 240px;
+}
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num { font-variant-numeric: tabular-nums; }
+details summary { cursor: pointer; color: var(--text-2); font-size: 13px; margin-top: 10px; }
+.why { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.why .card p { margin: 4px 0 0; color: var(--text-2); font-size: 14px; }
+footer { color: var(--muted); font-size: 13px; margin-top: 56px; border-top: 1px solid var(--border); padding-top: 16px; }
+a { color: var(--accent); }
+
+@media (max-width: 860px) {
+  .arch, .flow { grid-template-columns: minmax(0, 1fr); }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .charts, .why { grid-template-columns: minmax(0, 1fr); }
+  .tile .v { font-size: 24px; }
+  h1 { font-size: 27px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="brand"><span aria-hidden="true">🥑</span>AvocadoMTP</div>
+  <div class="theme" role="group" aria-label="Theme">
+    <button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button>
+  </div>
+</header>
+
+<h1>Android phones in the macOS Finder, over USB</h1>
+<p class="lede">macOS has no MTP stack, so it can't see Android phones. AvocadoMTP speaks MTP itself over libusb,
+and a small background daemon mounts each phone storage as its own disk through FUSE-T.</p>
+
+<div class="tiles">
+  <div class="card tile"><div class="k">Peak throughput</div><div class="v">40.6 MiB/s</div><div class="d">USB 2.0 ceiling ≈ 40</div></div>
+  <div class="card tile"><div class="k">Thumbnail reads</div><div class="v">3× faster</div><div class="d">5× less USB traffic</div></div>
+  <div class="card tile"><div class="k">Idle USB traffic</div><div class="v">0 / min</div><div class="d">hotplug, no polling</div></div>
+  <div class="card tile"><div class="k">Daemon memory</div><div class="v">≈10 MB</div><div class="d">idle · ≈36 MB copying</div></div>
+</div>
+
+<h2>Architecture</h2>
+<p class="sub">Click a component to see what it does. One daemon owns the USB connection and serves Finder and the CLI.</p>
+<div class="arch">
+  <div class="card">
+    <svg viewBox="0 0 640 520" role="img" aria-label="Architecture diagram">
+      <g class="group"><rect x="10" y="10" width="620" height="390" rx="12"/><text x="24" y="30">macOS</text></g>
+      <g class="group"><rect x="150" y="150" width="470" height="240" rx="10"/><text x="164" y="168">avocado daemon · LaunchAgent</text></g>
+
+      <path class="edge" data-e="finder-kernel" d="M110 80 L110 120 L110 200"/>
+      <path class="edge" data-e="kernel-fusefs" d="M110 250 L110 270 L200 270"/>
+      <path class="edge" data-e="cli-socket" d="M490 80 L490 200"/>
+      <path class="edge" data-e="fusefs-vfs" d="M260 290 L260 320 L330 320"/>
+      <path class="edge" data-e="socket-vfs" d="M490 250 L490 320 L430 320"/>
+      <path class="edge" data-e="vfs-mtp" d="M380 345 L380 370"/>
+      <path class="edge" data-e="mtp-usb" d="M380 395 L380 440"/>
+      <path class="edge" data-e="usb-phone" d="M380 480 L380 496 L540 496"/>
+
+      <g class="node" data-n="finder" tabindex="0"><rect x="30" y="40" width="160" height="44" rx="9"/><text x="110" y="61" text-anchor="middle">Finder · apps</text><text class="s" x="110" y="76" text-anchor="middle">drag & drop, Quick Look</text></g>
+      <g class="node" data-n="cli" tabindex="0"><rect x="410" y="40" width="160" height="44" rx="9"/><text x="490" y="61" text-anchor="middle">avocado CLI</text><text class="s" x="490" y="76" text-anchor="middle">ls · pull · push · shell</text></g>
+      <g class="node" data-n="kernel" tabindex="0"><rect x="30" y="200" width="110" height="50" rx="9"/><text x="85" y="222" text-anchor="middle">FUSE-T</text><text class="s" x="85" y="238" text-anchor="middle">FSKit / NFS</text></g>
+      <g class="node" data-n="fusefs" tabindex="0"><rect x="200" y="245" width="120" height="44" rx="9"/><text x="260" y="266" text-anchor="middle">fusefs</text><text class="s" x="260" y="281" text-anchor="middle">FS per storage</text></g>
+      <g class="node" data-n="socket" tabindex="0"><rect x="430" y="200" width="120" height="50" rx="9"/><text x="490" y="222" text-anchor="middle">socket server</text><text class="s" x="490" y="238" text-anchor="middle">framed JSON</text></g>
+      <g class="node" data-n="vfs" tabindex="0"><rect x="330" y="298" width="100" height="44" rx="9"/><text x="380" y="319" text-anchor="middle">vfs</text><text class="s" x="380" y="334" text-anchor="middle">path ↔ handle</text></g>
+      <g class="node" data-n="mtp" tabindex="0"><rect x="300" y="350" width="160" height="44" rx="9"/><text x="380" y="371" text-anchor="middle">mtp session</text><text class="s" x="380" y="386" text-anchor="middle">chunked transfers</text></g>
+      <g class="node" data-n="usb" tabindex="0"><rect x="300" y="440" width="160" height="44" rx="9"/><text x="380" y="461" text-anchor="middle">usbx · libusb</text><text class="s" x="380" y="476" text-anchor="middle">bulk I/O · hotplug</text></g>
+      <g class="node" data-n="phone" tabindex="0"><rect x="490" y="440" width="130" height="70" rx="12"/><text x="555" y="470" text-anchor="middle">📱 Android</text><text class="s" x="555" y="487" text-anchor="middle">MTP responder</text></g>
+      <text x="200" y="430" class="reftext">USB cable · bulk + interrupt endpoints</text>
+    </svg>
+  </div>
+  <div class="card detail" id="detail" aria-live="polite"></div>
+</div>
+
+<h2>Transfer flows</h2>
+<p class="sub">Step through what happens on each side of the cable. Press play, or use ← → on your keyboard.</p>
+<div class="tabs" role="tablist" id="flowtabs"></div>
+<div class="flow">
+  <div class="card lanes"><svg id="lanes" role="img" aria-label="Sequence diagram"></svg></div>
+  <div class="card steptext">
+    <div class="n" id="stepn"></div>
+    <h3 id="steph"></h3>
+    <p id="stepp"></p>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="ctl">
+      <button id="prev" aria-label="Previous step">← Prev</button>
+      <button id="play">▶ Play</button>
+      <button id="next" aria-label="Next step">Next →</button>
+    </div>
+  </div>
+</div>
+
+<h2>Performance dashboard</h2>
+<p class="sub">Measured on Apple Silicon, macOS 26, with a Retroid Pocket 6 over USB 2.0 (480 Mb/s). Hover a bar for details.</p>
+
+<div class="card chart">
+  <h3>Throughput</h3>
+  <div class="unit">MiB/s · dashed line: practical MTP ceiling on USB 2.0</div>
+  <svg id="tput" viewBox="0 0 640 230" role="img" aria-label="Throughput bar chart"></svg>
+  <details><summary>Table view</summary><table id="tput-t"></table></details>
+</div>
+
+<h3 style="margin-top:24px">Before vs after optimization</h3>
+<div class="legend"><span><i style="background:var(--series-2)"></i>Before</span><span><i style="background:var(--series-1)"></i>After</span></div>
+<div class="charts" id="opt"></div>
+
+<div class="why">
+  <div class="card"><h3>Lazy write staging</h3><p>FUSE-T's FSKit backend opens every file read-write. Files are now only copied to the Mac for editing when the first write actually arrives, not on every open.</p></div>
+  <div class="card"><h3>Adaptive read-ahead</h3><p>Starts at 128 KiB and doubles while reads stay sequential, up to 8 MiB. Thumbnails stay small; big copies get big blocks. Buffers are pooled.</p></div>
+  <div class="card"><h3>Hotplug, not polling</h3><p>The daemon sleeps until a USB device arrives or leaves. No traffic to an idle phone, so its MTP service can sleep too.</p></div>
+</div>
+
+<h2>Quick start</h2>
+<div class="card"><pre>brew install go libusb
+brew install --cask fuse-t
+go build -o bin/avocado ./cmd/avocado
+./bin/avocado daemon install     # starts at login, mounts the phone in Finder</pre>
+<p class="sub" style="margin:12px 0 0">Then turn on <b>System Settings → General → Login Items &amp; Extensions → File System Extensions → fuse-t</b>, unlock the phone and choose <b>File transfer</b>.</p></div>
+
+<footer>AvocadoMTP · <a href="https://github.com/andymartinezot/avocadomcp">source on GitHub</a></footer>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+// ---------- theme ----------
+(function () {
+  const root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem("avocado-theme"); } catch (e) {}
+  const apply = (t) => {
+    if (t === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
+    document.querySelectorAll(".theme button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
+  };
+  apply(saved || "auto");
+  document.querySelectorAll(".theme button").forEach(b => b.addEventListener("click", () => {
+    apply(b.dataset.t);
+    try { localStorage.setItem("avocado-theme", b.dataset.t); } catch (e) {}
+  }));
+})();
+
+// ---------- tooltip ----------
+const tip = document.getElementById("tip");
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+}
+function hideTip() { tip.style.opacity = 0; }
+
+// ---------- architecture ----------
+const comps = {
+  finder: { t: "Finder & apps", p: "macOS", edges: ["finder-kernel"], items: [
+    "Each phone storage appears as its own disk with an eject button.",
+    "Drag and drop, Quick Look, cp, rsync: anything that uses files.",
+    "Paths: ~/AvocadoMTP/Retroid Pocket 6, ~/AvocadoMTP/Retroid6"] },
+  kernel: { t: "FUSE-T", p: "brew install --cask fuse-t", edges: ["finder-kernel", "kernel-fusefs"], items: [
+    "Kext-less FUSE: forwards file system calls to user space.",
+    "FSKit backend: real local volumes (needs the System Settings toggle).",
+    "Fallback: a local NFS share, chosen automatically if FSKit fails."] },
+  fusefs: { t: "fusefs", p: "internal/fusefs", edges: ["kernel-fusefs", "fusefs-vfs"], items: [
+    "One file system per storage, mounted when the phone connects.",
+    "Writes are staged locally and uploaded once, on close.",
+    "Adaptive read-ahead (128 KiB → 8 MiB) for reads.",
+    "._* and .DS_Store live in memory, never on the phone."] },
+  cli: { t: "avocado CLI", p: "cmd/avocado", edges: ["cli-socket"], items: [
+    "ls, pull, push, rm, mkdir, mv and an interactive shell.",
+    "Talks to the daemon when it runs; --direct uses USB itself."] },
+  socket: { t: "Socket server", p: "internal/daemon", edges: ["cli-socket", "socket-vfs"], items: [
+    "Unix socket with framed JSON requests plus binary data frames.",
+    "POSIX error codes (ENOENT, ENOSPC, …) for every failure.",
+    "status reports the phone, storages and transfer counters."] },
+  vfs: { t: "vfs", p: "internal/vfs", edges: ["fusefs-vfs", "socket-vfs", "vfs-mtp"], items: [
+    "Turns /Storage/dir/file into MTP object handles.",
+    "Directory cache with a short TTL; Unicode-normalized names.",
+    "Names the internal storage after the device model."] },
+  mtp: { t: "MTP session", p: "internal/mtp", edges: ["vfs-mtp", "mtp-usb"], items: [
+    "Command → data → response transactions, one at a time.",
+    "Transfers in 8 MiB chunks so other requests interleave.",
+    "Android extensions: partial reads, in-place edit writes."] },
+  usb: { t: "usbx", p: "internal/usbx (cgo · libusb)", edges: ["mtp-usb", "usb-phone"], items: [
+    "Finds the MTP interface and claims it (stops ptpcamerad).",
+    "Hotplug notifications: the daemon sleeps until a device changes.",
+    "Recovery for stuck devices: PTP reset, then USB port reset."] },
+  phone: { t: "Android phone", p: "MTP responder", edges: ["usb-phone"], items: [
+    "Unlock it and choose File transfer in the USB notification.",
+    "Storages: internal memory, SD card (one volume each)."] },
+};
+const detail = document.getElementById("detail");
+function selectComp(id) {
+  document.querySelectorAll(".node").forEach(n => n.classList.toggle("on", n.dataset.n === id));
+  const c = comps[id];
+  document.querySelectorAll(".edge").forEach(e => e.classList.toggle("on", c.edges.includes(e.dataset.e)));
+  detail.innerHTML = `<div class="pkg">${c.p}</div><h3>${c.t}</h3><ul>${c.items.map(i => `<li>${i}</li>`).join("")}</ul>`;
+}
+document.querySelectorAll(".node").forEach(n => {
+  n.addEventListener("click", () => selectComp(n.dataset.n));
+  n.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectComp(n.dataset.n); } });
+});
+selectComp("fusefs");
+
+// ---------- flows ----------
+const flows = {
+  "Copy to phone": { lanes: ["Finder", "fusefs", "Staging (SSD)", "Daemon", "Phone"], steps: [
+    [0, 1, "create photo.jpg", "Finder creates the file", "fusefs opens an unlinked temporary file on the Mac. Nothing touches the phone yet."],
+    [1, 2, "write chunks", "Data lands on the Mac", "Each write goes to the staging file at its offset. Copies run at SSD speed."],
+    [0, 1, "flush / fsync ×N", "Syncs are ignored", "The NFS/FSKit layers sync many times while writing. Uploading on each sync would resend the whole file again and again."],
+    [0, 1, "close", "The file is closed", "Release is the one moment the upload starts."],
+    [1, 3, "upload", "Hand-off to the daemon", "Through the shared session, so the CLI and the other volume keep working."],
+    [3, 4, "SendObjectInfo + edits", "Chunked upload", "An empty object is created, then filled with 8 MiB partial writes. Other requests run between chunks."],
+    [4, 1, "new handle", "Done", "When replacing, the upload goes to a temporary name first and is swapped in, so a failure never destroys the original."],
+  ]},
+  "Read from phone": { lanes: ["App / kernel", "fusefs", "Daemon", "Phone"], steps: [
+    [0, 1, "open (read-write)", "Open does not download", "FSKit opens files read-write even for reads. Staging waits for an actual write, so plain reads cost nothing extra."],
+    [0, 1, "read 1 MiB @ 0", "First read", "Random access starts with a small window: thumbnails and EXIF readers fetch only what they need."],
+    [1, 3, "GetPartialObject64", "Partial read", "Exactly the requested range crosses the cable."],
+    [0, 1, "read next…", "Sequential detected", "Each sequential fetch doubles the read-ahead window up to 8 MiB."],
+    [1, 3, "8 MiB block", "Big blocks", "Fewer, larger USB transactions; the buffer comes from a pool, so there's no allocation churn."],
+    [1, 0, "served from block", "Cache hit", "The next several reads are answered from memory."],
+  ]},
+  "Phone plugged in": { lanes: ["USB / hotplug", "Daemon", "Phone", "FUSE-T"], steps: [
+    [0, 1, "device arrived", "Hotplug event", "The daemon was asleep; libusb wakes it only when a USB device arrives or leaves."],
+    [1, 2, "claim + OpenSession", "Connect", "Claims the MTP interface (stopping Image Capture's ptpcamerad) and opens a session."],
+    [2, 1, "storages", "Discover storages", "Internal memory is named after the device model; SD cards keep their label."],
+    [1, 3, "mount ×2", "Mount volumes", "One FSKit volume per storage. If FSKit fails, it falls back to NFS automatically."],
+    [0, 1, "device left", "Unplugged", "Volumes are unmounted and the empty mount points removed, so nothing is written to the Mac by mistake."],
+  ]},
+};
+let flowName = "Copy to phone", step = 0, timer = null;
+const tabs = document.getElementById("flowtabs");
+Object.keys(flows).forEach(name => {
+  const b = document.createElement("button");
+  b.textContent = name; b.setAttribute("role", "tab");
+  b.addEventListener("click", () => { flowName = name; step = 0; stop(); renderFlow(); });
+  tabs.appendChild(b);
+});
+const lanesSvg = document.getElementById("lanes");
+function renderFlow() {
+  const f = flows[flowName];
+  tabs.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", String(b.textContent === flowName)));
+  const W = 640, top = 40, gap = 44, H = top + f.steps.length * gap + 20;
+  const x = i => 50 + i * ((W - 100) / (f.lanes.length - 1));
+  let s = "";
+  f.lanes.forEach((l, i) => {
+    s += `<g class="lane"><text x="${x(i)}" y="18" text-anchor="middle">${l}</text><line x1="${x(i)}" y1="28" x2="${x(i)}" y2="${H - 8}"/></g>`;
+  });
+  f.steps.forEach(([a, b, label], i) => {
+    const y = top + i * gap + 14, x1 = x(a), x2 = x(b), dir = x2 > x1 ? 1 : -1;
+    const cls = i === step ? "cur" : i < step ? "done" : "";
+    s += `<g class="msg ${cls}"><line x1="${x1}" y1="${y}" x2="${x2 - dir * 7}" y2="${y}"/>` +
+      `<path d="M${x2} ${y} l${-dir * 9} -5 v10 z" fill="currentColor" style="color:var(${i === step ? "--accent" : "--edge"})"/>` +
+      `<text x="${(x1 + x2) / 2}" y="${y - 7}" text-anchor="middle">${label}</text></g>`;
+  });
+  lanesSvg.innerHTML = s;
+  lanesSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const [, , , head, body] = f.steps[step];
+  document.getElementById("stepn").textContent = `Step ${step + 1} of ${f.steps.length}`;
+  document.getElementById("steph").textContent = head;
+  document.getElementById("stepp").textContent = body;
+  document.getElementById("bar").style.width = ((step + 1) / f.steps.length * 100) + "%";
+}
+function go(d) { const n = flows[flowName].steps.length; step = (step + d + n) % n; renderFlow(); }
+function stop() { clearInterval(timer); timer = null; document.getElementById("play").textContent = "▶ Play"; }
+document.getElementById("prev").onclick = () => { stop(); go(-1); };
+document.getElementById("next").onclick = () => { stop(); go(1); };
+document.getElementById("play").onclick = () => {
+  if (timer) return stop();
+  document.getElementById("play").textContent = "❚❚ Pause";
+  timer = setInterval(() => go(1), 2200);
+};
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea")) return;
+  if (e.key === "ArrowRight") { stop(); go(1); } else if (e.key === "ArrowLeft") { stop(); go(-1); }
+});
+renderFlow();
+
+// ---------- charts ----------
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); return Math.ceil(v / p * 1.1) * p; }
+function barPath(x, y, w, h) { // rounded top corners, square at the baseline
+  const r = Math.min(4, w / 2, h);
+  return `M${x} ${y + h} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + w - r} Q${x + w} ${y} ${x + w} ${y + r} V${y + h} Z`;
+}
+function axis(W, H, padL, padB, max, ticks, fmt) {
+  let s = `<g class="axis">`;
+  for (let i = 0; i <= ticks; i++) {
+    const v = max * i / ticks, y = H - padB - (H - padB - 14) * i / ticks;
+    s += `<line x1="${padL}" x2="${W}" y1="${y}" y2="${y}"/><text x="${padL - 6}" y="${y + 4}" text-anchor="end">${fmt(v)}</text>`;
+  }
+  return s + `</g>`;
+}
+
+// throughput: single series + ceiling reference line
+const tput = [
+  { k: "CLI push", v: 40.6, d: "2 GiB file · SHA-256 identical" },
+  { k: "CLI pull", v: 35.9, d: "2 GiB file through the daemon" },
+  { k: "Volume → Mac", v: 33, d: "1 GiB with cp from the Finder volume" },
+  { k: "Mac → volume", v: 36, d: "500 MB with cp into the Finder volume" },
+];
+(function () {
+  const W = 640, H = 230, padL = 36, padB = 26, max = 45;
+  const svg = document.getElementById("tput");
+  let s = axis(W, H, padL, padB, max, 3, v => v.toFixed(0));
+  const slot = (W - padL) / tput.length, bw = Math.min(64, slot * .5);
+  tput.forEach((d, i) => {
+    const h = (H - padB - 14) * d.v / max, x = padL + slot * i + (slot - bw) / 2, y = H - padB - h;
+    s += `<path class="bar" data-i="${i}" d="${barPath(x, y, bw, h)}" fill="var(--series-1)"/>`;
+    s += `<rect data-i="${i}" x="${padL + slot * i}" y="14" width="${slot}" height="${H - padB - 14}" fill="transparent"/>`;
+    s += `<text class="lbl" x="${x + bw / 2}" y="${y - 6}" text-anchor="middle">${d.v}</text>`;
+    s += `<g class="axis"><text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${d.k}</text></g>`;
+  });
+  const yc = H - padB - (H - padB - 14) * 40 / max;
+  s += `<line class="ref" x1="${padL}" x2="${W}" y1="${yc}" y2="${yc}"/><text class="reftext" x="${W}" y="${yc - 5}" text-anchor="end">≈ 40 MiB/s USB 2.0</text>`;
+  svg.innerHTML = s;
+  svg.querySelectorAll("[data-i]").forEach(el => {
+    const d = tput[el.dataset.i];
+    el.addEventListener("mousemove", e => showTip(e, `<b>${d.k}</b>: ${d.v} MiB/s<br>${d.d}`));
+    el.addEventListener("mouseleave", hideTip);
+  });
+  document.getElementById("tput-t").innerHTML = "<tr><th>Transfer</th><th>MiB/s</th><th>Notes</th></tr>" +
+    tput.map(d => `<tr><td>${d.k}</td><td class="num">${d.v}</td><td>${d.d}</td></tr>`).join("");
+})();
+
+// before/after: one small chart per metric (different units never share an axis)
+const opt = [
+  { t: "Thumbnail-style reads, time", u: "seconds for 64 KiB headers of 40 photos · lower is better", b: 6.79, a: 2.33, f: v => v.toFixed(2) + " s" },
+  { t: "Thumbnail-style reads, USB data", u: "megabytes moved over the cable · lower is better", b: 200, a: 42, f: v => v.toFixed(0) + " MB" },
+  { t: "1 GiB copy, daemon CPU", u: "CPU seconds (before also wrote 1 GiB to the SSD) · lower is better", b: 2.8, a: 1.9, f: v => v.toFixed(1) + " s" },
+  { t: "Idle phone, USB transactions", u: "MTP transactions per minute · lower is better", b: 20, a: 0, f: v => v.toFixed(0) + " / min" },
+];
+const optEl = document.getElementById("opt");
+opt.forEach((m, mi) => {
+  const card = document.createElement("div");
+  card.className = "card chart";
+  const W = 300, H = 180, padL = 40, padB = 22, max = niceMax(m.b);
+  let s = axis(W, H, padL, padB, max, 2, v => (v >= 10 ? v.toFixed(0) : v.toFixed(1)));
+  const vals = [["Before", m.b, "--series-2"], ["After", m.a, "--series-1"]];
+  const slot = (W - padL) / 2, bw = 56;
+  vals.forEach(([k, v, c], i) => {
+    const h = Math.max((H - padB - 14) * v / max, v === 0 ? 0 : 2), x = padL + slot * i + (slot - bw) / 2, y = H - padB - h;
+    if (h > 0) s += `<path class="bar" d="${barPath(x, y, bw, h)}" fill="var(${c})"/>`;
+    else s += `<line x1="${x}" x2="${x + bw}" y1="${H - padB}" y2="${H - padB}" stroke="var(${c})" stroke-width="2"/>`;
+    s += `<rect data-k="${k}" data-v="${v}" x="${padL + slot * i}" y="14" width="${slot}" height="${H - padB - 14}" fill="transparent"/>`;
+    s += `<text class="lbl" x="${x + bw / 2}" y="${y - 6}" text-anchor="middle">${m.f(v)}</text>`;
+    s += `<g class="axis"><text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${k}</text></g>`;
+  });
+  card.innerHTML = `<h3>${m.t}</h3><div class="unit">${m.u}</div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.t}">${s}</svg>` +
+    `<details><summary>Table view</summary><table><tr><th></th><th>Value</th></tr>` +
+    `<tr><td>Before</td><td class="num">${m.f(m.b)}</td></tr><tr><td>After</td><td class="num">${m.f(m.a)}</td></tr></table></details>`;
+  card.querySelectorAll("[data-k]").forEach(el => {
+    el.addEventListener("mousemove", e => {
+      const ratio = m.a === 0 ? "eliminated" : (m.b / m.a).toFixed(1) + "× better";
+      showTip(e, `<b>${m.t}</b><br>${el.dataset.k}: ${m.f(+el.dataset.v)}<br>${ratio}`);
+    });
+    el.addEventListener("mouseleave", hideTip);
+  });
+  optEl.appendChild(card);
+});
+</script>
+</body>
+</html>
