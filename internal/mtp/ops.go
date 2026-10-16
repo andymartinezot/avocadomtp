@@ -188,14 +188,24 @@ func (s *Session) ReadAt(ctx context.Context, h uint32, p []byte, off int64) (in
 	if !s.Info.Supports(ptp.OpGetPartialObject64) {
 		return 0, &RespError{Op: ptp.OpGetPartialObject64, Code: ptp.RespOperationNotSupported}
 	}
-	buf := bytes.NewBuffer(p[:0])
+	w := &fillWriter{p: p}
 	_, err := s.Transact(ctx, ptp.OpGetPartialObject64,
-		[]uint32{h, uint32(off), uint32(uint64(off) >> 32), uint32(len(p))}, nil, 0, buf)
-	n := copy(p, buf.Bytes())
-	if err == nil && n < len(p) {
+		[]uint32{h, uint32(off), uint32(uint64(off) >> 32), uint32(len(p))}, nil, 0, w)
+	if err == nil && w.n < len(p) {
 		err = io.EOF
 	}
-	return n, err
+	return w.n, err
+}
+
+// fillWriter writes into a fixed buffer, dropping anything past its end.
+type fillWriter struct {
+	p []byte
+	n int
+}
+
+func (w *fillWriter) Write(b []byte) (int, error) {
+	w.n += copy(w.p[w.n:], b)
+	return len(b), nil
 }
 
 // Upload creates a file named name in parent and streams size bytes from r.
@@ -250,5 +260,37 @@ func (s *Session) Rename(ctx context.Context, h uint32, name string) error {
 // Move moves an object to a new parent (possibly in another storage).
 func (s *Session) Move(ctx context.Context, h, storage, parent uint32) error {
 	_, err := s.Transact(ctx, ptp.OpMoveObject, []uint32{h, storage, parent}, nil, 0, nil)
+	return err
+}
+
+// SupportsEdit reports whether the device implements Android's in-place edit
+// operations (BeginEditObject, SendPartialObject, TruncateObject, EndEditObject).
+func (s *Session) SupportsEdit() bool {
+	return s.Info.Supports(ptp.OpBeginEditObject) && s.Info.Supports(ptp.OpSendPartialObject) &&
+		s.Info.Supports(ptp.OpEndEditObject)
+}
+
+// BeginEdit opens an existing object for WritePartial/Truncate.
+func (s *Session) BeginEdit(ctx context.Context, h uint32) error {
+	_, err := s.Transact(ctx, ptp.OpBeginEditObject, []uint32{h}, nil, 0, nil)
+	return err
+}
+
+// WritePartial writes p at offset off of an object opened with BeginEdit.
+func (s *Session) WritePartial(ctx context.Context, h uint32, off int64, p []byte) error {
+	_, err := s.Transact(ctx, ptp.OpSendPartialObject,
+		[]uint32{h, uint32(off), uint32(uint64(off) >> 32), uint32(len(p))}, bytes.NewReader(p), int64(len(p)), nil)
+	return err
+}
+
+// Truncate sets the size of an object opened with BeginEdit.
+func (s *Session) Truncate(ctx context.Context, h uint32, size int64) error {
+	_, err := s.Transact(ctx, ptp.OpTruncateObject, []uint32{h, uint32(size), uint32(uint64(size) >> 32)}, nil, 0, nil)
+	return err
+}
+
+// EndEdit commits the changes made since BeginEdit.
+func (s *Session) EndEdit(ctx context.Context, h uint32) error {
+	_, err := s.Transact(ctx, ptp.OpEndEditObject, []uint32{h}, nil, 0, nil)
 	return err
 }

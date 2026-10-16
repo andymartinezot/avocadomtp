@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
@@ -54,6 +55,20 @@ type Session struct {
 	pending []byte // bytes read past the end of a data phase (start of the response)
 	broken  error  // set when the transport is out of sync; the session must be reopened
 	Info    *ptp.DeviceInfo
+
+	bytesIn, bytesOut, ops atomic.Uint64
+}
+
+// Stats are cumulative counters for a session.
+type Stats struct {
+	BytesIn  uint64 // file data received from the device
+	BytesOut uint64 // file data sent to the device
+	Ops      uint64 // MTP transactions
+}
+
+// Stats returns the session's counters. Safe to call at any time.
+func (s *Session) Stats() Stats {
+	return Stats{BytesIn: s.bytesIn.Load(), BytesOut: s.bytesOut.Load(), Ops: s.ops.Load()}
 }
 
 // Open starts a session on the transport and fetches the device info.
@@ -109,6 +124,7 @@ func (s *Session) Transact(ctx context.Context, op uint16, params []uint32, data
 		return nil, s.broken
 	}
 	s.tx++
+	s.ops.Add(1)
 	var resp []uint32
 	err := s.transactTx(ctx, s.tx, op, params, dataOut, outLen, dataIn, &resp)
 	return resp, err
@@ -218,7 +234,9 @@ func (s *Session) recvData(ctx context.Context, tx uint32, h ptp.Header, first [
 			chunk = chunk[:remaining]
 		}
 		if len(chunk) > 0 {
+			s.bytesIn.Add(uint64(len(chunk)))
 			if _, err := w.Write(chunk); err != nil {
+				_ = s.t.CancelRequest(tx)
 				s.drain()
 				return fmt.Errorf("write local data: %w", err)
 			}
@@ -287,6 +305,7 @@ func (s *Session) sendData(ctx context.Context, tx uint32, op uint16, r io.Reade
 			return fmt.Errorf("send data: %w", err)
 		}
 		sent += want
+		s.bytesOut.Add(uint64(want))
 		off = 0
 		if sent >= size {
 			if n%s.mps == 0 {

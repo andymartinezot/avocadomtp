@@ -1,4 +1,4 @@
-package mtp
+package mtp_test
 
 import (
 	"bytes"
@@ -7,15 +7,19 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/andymartinezot/avocadomtp/internal/mtp"
+	"github.com/andymartinezot/avocadomtp/internal/mtp/mtptest"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 )
 
 const internal = 0x00010001
 
-func openFake(t *testing.T) (*fakeDev, *Session) {
+const chunkSize = 1 << 20 // mirrors mtp.chunkSize
+
+func openFake(t *testing.T) (*mtptest.Fake, *Session) {
 	t.Helper()
-	f := newFake(t)
-	s, err := Open(f, f.mps)
+	f := mtptest.New(t)
+	s, err := Open(f, f.MPS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +85,12 @@ func TestDownloadUnknownLength(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.unknownLen = true
+		f.UnknownLen = true
 		var got bytes.Buffer
 		if err := s.Download(ctx, h, &got); err != nil {
 			t.Fatalf("%d: %v", n, err)
 		}
-		f.unknownLen = false
+		f.UnknownLen = false
 		if !bytes.Equal(got.Bytes(), data) {
 			t.Fatalf("%d: mismatch, got %d bytes", n, got.Len())
 		}
@@ -154,5 +158,40 @@ func TestCancelledUploadBreaksSession(t *testing.T) {
 	}
 	if _, err := s.StorageIDs(context.Background()); err == nil {
 		t.Fatal("session should be marked unusable after an aborted transfer")
+	}
+}
+
+func TestEditWrite(t *testing.T) {
+	_, s := openFake(t)
+	ctx := context.Background()
+	if !s.SupportsEdit() {
+		t.Fatal("fake should support edit ops")
+	}
+	h, err := s.Upload(ctx, internal, ptp.HandleRoot, "e.bin", 0, time.Now(), bytes.NewReader(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePartial(ctx, h, 0, []byte("x")); err == nil {
+		t.Fatal("writing without BeginEdit must fail")
+	}
+	data := randBytes(3*chunkSize + 11)
+	if err := s.BeginEdit(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	for off := 0; off < len(data); off += chunkSize {
+		end := min(off+chunkSize, len(data))
+		if err := s.WritePartial(ctx, h, int64(off), data[off:end]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Truncate(ctx, h, int64(len(data)-1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EndEdit(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if err := s.Download(ctx, h, &got); err != nil || !bytes.Equal(got.Bytes(), data[:len(data)-1]) {
+		t.Fatalf("content mismatch (%d bytes) %v", got.Len(), err)
 	}
 }

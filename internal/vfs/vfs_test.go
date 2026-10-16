@@ -71,3 +71,19 @@ func TestResolve(t *testing.T) {
 		t.Fatalf("expected exactly one refetch, got %d", b.lists-before)
 	}
 }
+
+func TestDeviceName(t *testing.T) {
+	f := New(newBackend())
+	f.DeviceName = "Retroid Pocket 6"
+	ctx := context.Background()
+	root, err := f.ReadDir(ctx, "/")
+	if err != nil || root[0].Name != "Retroid Pocket 6" || root[1].Name != "SD card" {
+		t.Fatalf("root %+v %v", root, err)
+	}
+	// The phone's own description still works as a path.
+	for _, p := range []string{"/Retroid Pocket 6/DCIM", "/Internal shared storage/DCIM"} {
+		if e, err := f.Stat(ctx, p); err != nil || e.Handle != 10 {
+			t.Fatalf("%s: %+v %v", p, e, err)
+		}
+	}
+}

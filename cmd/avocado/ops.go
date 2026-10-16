@@ -16,12 +16,13 @@ import (
 )
 
 func (c *client) info(ctx context.Context, w io.Writer) error {
-	di := c.s.Info
+	di := c.r.Device()
 	fmt.Fprintf(w, "Device:   %s %s\n", di.Manufacturer, di.Model)
-	fmt.Fprintf(w, "Version:  %s\n", di.DeviceVersion)
-	fmt.Fprintf(w, "Serial:   %s\n", di.SerialNumber)
-	fmt.Fprintf(w, "USB:      %s\n", c.cand)
-	fmt.Fprintf(w, "MTP ext:  %s\n", di.VendorExtensionDesc)
+	fmt.Fprintf(w, "Version:  %s\n", di.Version)
+	fmt.Fprintf(w, "Serial:   %s\n", di.Serial)
+	fmt.Fprintf(w, "USB:      %s\n", di.USB)
+	fmt.Fprintf(w, "MTP ext:  %s\n", di.Extension)
+	fmt.Fprintf(w, "Via:      %s\n", c.via)
 	storages, err := c.fs.Storages(ctx)
 	if err != nil {
 		return err
@@ -121,7 +122,7 @@ func (c *client) pullEntry(ctx context.Context, e *vfs.Entry, local string, recu
 		return err
 	}
 	pr := newProgress(e.Path, int64(e.Size))
-	err = c.s.Download(ctx, e.Handle, pr.writer(f))
+	err = c.r.Download(ctx, e.Handle, pr.writer(f))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -196,7 +197,7 @@ func (c *client) pushPath(ctx context.Context, local string, dir *vfs.Entry, rec
 			return fmt.Errorf("%s exists and is a file", remotePath)
 		}
 		if sub == nil {
-			h, err := c.s.Mkdir(ctx, dir.StorageID, dir.Handle, name)
+			h, err := c.r.Mkdir(ctx, dir.StorageID, dir.Handle, name)
 			c.fs.Invalidate(dir.StorageID, dir.Handle)
 			if err != nil {
 				return fmt.Errorf("mkdir %s: %w", remotePath, err)
@@ -223,7 +224,7 @@ func (c *client) pushPath(ctx context.Context, local string, dir *vfs.Entry, rec
 			return fmt.Errorf("%s exists and is a folder", remotePath)
 		}
 		// MTP cannot overwrite in place: replace the old file.
-		if err := c.s.Delete(ctx, existing.Handle); err != nil {
+		if err := c.r.Delete(ctx, existing.Handle); err != nil {
 			return fmt.Errorf("replace %s: %w", remotePath, err)
 		}
 	}
@@ -233,7 +234,7 @@ func (c *client) pushPath(ctx context.Context, local string, dir *vfs.Entry, rec
 	}
 	defer f.Close()
 	pr := newProgress(remotePath, fi.Size())
-	_, err = c.s.Upload(ctx, dir.StorageID, dir.Handle, name, fi.Size(), fi.ModTime(), pr.reader(f))
+	_, err = c.r.Upload(ctx, dir.StorageID, dir.Handle, name, fi.Size(), fi.ModTime(), pr.reader(f))
 	c.fs.Invalidate(dir.StorageID, dir.Handle)
 	if err != nil {
 		return fmt.Errorf("push %s: %w", remotePath, err)
@@ -253,7 +254,7 @@ func (c *client) rm(ctx context.Context, w io.Writer, p string, recursive bool) 
 	if e.IsDir && !recursive {
 		return fmt.Errorf("%s is a folder (use -r)", e.Path)
 	}
-	if err := c.s.Delete(ctx, e.Handle); err != nil {
+	if err := c.r.Delete(ctx, e.Handle); err != nil {
 		return fmt.Errorf("rm %s: %w", e.Path, err)
 	}
 	c.invalidateParent(ctx, e.Path)
@@ -287,7 +288,7 @@ func (c *client) mkdir(ctx context.Context, p string, parents bool) error {
 	if par.IsRoot() {
 		return errors.New("cannot create a storage; create folders inside one")
 	}
-	_, err = c.s.Mkdir(ctx, par.StorageID, par.Handle, path.Base(p))
+	_, err = c.r.Mkdir(ctx, par.StorageID, par.Handle, path.Base(p))
 	c.fs.Invalidate(par.StorageID, par.Handle)
 	return err
 }
@@ -326,12 +327,12 @@ func (c *client) mv(ctx context.Context, src, dst string) error {
 	defer c.fs.Invalidate(srcDir.StorageID, srcDir.Handle)
 	defer c.fs.Invalidate(dstDir.StorageID, dstDir.Handle)
 	if dstDir.StorageID != srcDir.StorageID || dstDir.Handle != srcDir.Handle {
-		if err := c.s.Move(ctx, s.Handle, dstDir.StorageID, dstDir.Handle); err != nil {
+		if err := c.r.Move(ctx, s.Handle, dstDir.StorageID, dstDir.Handle); err != nil {
 			return fmt.Errorf("move %s: %w", s.Path, err)
 		}
 	}
 	if newName != s.Name {
-		if err := c.s.Rename(ctx, s.Handle, newName); err != nil {
+		if err := c.r.Rename(ctx, s.Handle, newName); err != nil {
 			return fmt.Errorf("rename %s: %w", s.Path, err)
 		}
 	}

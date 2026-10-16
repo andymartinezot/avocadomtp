@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 )
@@ -24,9 +26,10 @@ type Backend interface {
 
 // Storage is a top-level volume such as internal memory or an SD card.
 type Storage struct {
-	ID   uint32
-	Name string
-	Info *ptp.StorageInfo
+	ID    uint32
+	Name  string
+	Alias string // the phone's own description, accepted in paths too
+	Info  *ptp.StorageInfo
 }
 
 // Entry is a resolved path.
@@ -51,10 +54,21 @@ type FS struct {
 	b        Backend
 	mu       sync.Mutex
 	storages []*Storage
-	dirs     map[dirKey][]*mtp.Object
+	dirs     map[dirKey]dirEntry
+
+	// TTL is how long a directory listing stays cached (0 = until invalidated).
+	TTL time.Duration
+	// DeviceName, if set, replaces generic internal-storage descriptions
+	// ("Internal shared storage") so the volume is named after the phone.
+	DeviceName string
 }
 
-func New(b Backend) *FS { return &FS{b: b, dirs: map[dirKey][]*mtp.Object{}} }
+type dirEntry struct {
+	objs []*mtp.Object
+	at   time.Time
+}
+
+func New(b Backend) *FS { return &FS{b: b, dirs: map[dirKey]dirEntry{}} }
 
 // Storages returns the device storages, named after their description.
 func (f *FS) Storages(ctx context.Context) ([]*Storage, error) {
@@ -85,6 +99,10 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 		if name == "" {
 			name = fmt.Sprintf("Storage %08X", id)
 		}
+		alias := strings.ReplaceAll(name, "/", "-")
+		if f.DeviceName != "" && isGenericInternal(name) {
+			name = f.DeviceName
+		}
 		name = strings.ReplaceAll(name, "/", "-")
 		if n := seen[name]; n > 0 {
 			seen[name] = n + 1
@@ -92,10 +110,17 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 		} else {
 			seen[name] = 1
 		}
-		out = append(out, &Storage{ID: id, Name: name, Info: info})
+		out = append(out, &Storage{ID: id, Name: name, Alias: alias, Info: info})
 	}
 	f.storages = out
 	return out, nil
+}
+
+// isGenericInternal reports descriptions that name the phone's built-in
+// memory rather than anything the user chose ("Internal shared storage").
+func isGenericInternal(desc string) bool {
+	d := strings.ToLower(desc)
+	return strings.Contains(d, "internal") || d == "phone" || d == "phone storage"
 }
 
 // Clean normalizes p to an absolute slash path.
@@ -124,7 +149,7 @@ func (f *FS) Stat(ctx context.Context, p string) (*Entry, error) {
 	}
 	if st == nil {
 		for _, s := range storages {
-			if strings.EqualFold(s.Name, parts[0]) {
+			if strings.EqualFold(s.Name, parts[0]) || strings.EqualFold(s.Alias, parts[0]) {
 				st = s
 			}
 		}
@@ -156,8 +181,16 @@ func find(objs []*mtp.Object, name string) *mtp.Object {
 			return o
 		}
 	}
+	// macOS often sends decomposed Unicode (NFD) while Android stores
+	// composed names (NFC): compare normalized forms.
+	nname := norm.NFC.String(name)
 	for _, o := range objs {
-		if strings.EqualFold(o.Name, name) {
+		if norm.NFC.String(o.Name) == nname {
+			return o
+		}
+	}
+	for _, o := range objs {
+		if strings.EqualFold(norm.NFC.String(o.Name), nname) {
 			return o
 		}
 	}
@@ -171,14 +204,14 @@ func entryFor(p string, o *mtp.Object) *Entry {
 
 func (f *FS) listLocked(ctx context.Context, storage, handle uint32) ([]*mtp.Object, error) {
 	k := dirKey{storage, handle}
-	if objs, ok := f.dirs[k]; ok {
-		return objs, nil
+	if d, ok := f.dirs[k]; ok && (f.TTL == 0 || time.Since(d.at) < f.TTL) {
+		return d.objs, nil
 	}
 	objs, err := f.b.List(ctx, storage, handle)
 	if err != nil {
 		return nil, err
 	}
-	f.dirs[k] = objs
+	f.dirs[k] = dirEntry{objs: objs, at: time.Now()}
 	return objs, nil
 }
 
@@ -230,7 +263,7 @@ func (f *FS) Invalidate(storage, handle uint32) {
 // Reset drops every cached listing (and storage info).
 func (f *FS) Reset() {
 	f.mu.Lock()
-	f.dirs = map[dirKey][]*mtp.Object{}
+	f.dirs = map[dirKey]dirEntry{}
 	f.storages = nil
 	f.mu.Unlock()
 }

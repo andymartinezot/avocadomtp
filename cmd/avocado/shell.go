@@ -20,7 +20,7 @@ Other:   help · exit (or Ctrl-D, or Ctrl-C at the prompt). Ctrl-C cancels a run
 Paths with spaces need quotes: cd "Internal shared storage"`
 
 func (c *client) shell() error {
-	fmt.Printf("Connected to %s %s. Type \"help\" for commands.\n", c.s.Info.Manufacturer, c.s.Info.Model)
+	fmt.Printf("Connected to %s %s. Type \"help\" for commands.\n", c.r.Device().Manufacturer, c.r.Device().Model)
 	cwd := "/"
 	if st, err := c.fs.Storages(context.Background()); err == nil && len(st) > 0 {
 		cwd = "/" + st[0].Name

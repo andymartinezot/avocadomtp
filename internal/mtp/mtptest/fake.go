@@ -1,4 +1,5 @@
-package mtp
+// Package mtptest provides an in-memory MTP device speaking the USB bulk framing.
+package mtptest
 
 import (
 	"errors"
@@ -8,10 +9,11 @@ import (
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 )
 
-// fakeDev is an in-memory MTP responder speaking the USB bulk framing.
-type fakeDev struct {
-	t   *testing.T
-	mps int
+// Fake is an in-memory MTP responder speaking the USB bulk framing. It
+// satisfies mtp.Transport.
+type Fake struct {
+	t   testing.TB
+	MPS int
 
 	out [][]byte // queued IN transfers
 
@@ -27,7 +29,9 @@ type fakeDev struct {
 	next       uint32
 	sendTarget uint32
 
-	unknownLen bool // send GetObject data with the 0xFFFFFFFF length sentinel
+	UnknownLen bool
+
+	editing map[uint32]bool // send GetObject data with the 0xFFFFFFFF length sentinel
 }
 
 type fobj struct {
@@ -39,18 +43,24 @@ type fobj struct {
 
 var errFakeTimeout = errors.New("fake: timeout")
 
-func newFake(t *testing.T) *fakeDev {
-	return &fakeDev{
-		t: t, mps: 512, next: 1,
+// New returns a fake phone with "Internal shared storage" and "SD card".
+func New(t testing.TB) *Fake {
+	return &Fake{
+		t: t, MPS: 512, next: 1,
 		storages: map[uint32]string{0x00010001: "Internal shared storage", 0x00020001: "SD card"},
 		objs:     map[uint32]*fobj{},
 	}
 }
 
-func (f *fakeDev) ClearHalt()                 {}
-func (f *fakeDev) CancelRequest(uint32) error { return nil }
+// Reset drops any half-finished transfer, like a USB reset before a new session.
+func (f *Fake) Reset() {
+	f.out, f.inData, f.dataBuf = nil, false, nil
+}
 
-func (f *fakeDev) BulkRead(b []byte, _ time.Duration) (int, error) {
+func (f *Fake) ClearHalt()                 {}
+func (f *Fake) CancelRequest(uint32) error { return nil }
+
+func (f *Fake) BulkRead(b []byte, _ time.Duration) (int, error) {
 	if len(f.out) == 0 {
 		return 0, errFakeTimeout
 	}
@@ -64,16 +74,16 @@ func (f *fakeDev) BulkRead(b []byte, _ time.Duration) (int, error) {
 	return n, nil
 }
 
-func (f *fakeDev) BulkWrite(b []byte, _ time.Duration) (int, error) {
+func (f *Fake) BulkWrite(b []byte, _ time.Duration) (int, error) {
 	if f.inData {
 		f.dataBuf = append(f.dataBuf, b...)
 		h, _ := ptp.DecodeHeader(f.dataBuf)
 		done := false
 		if h.Length == 0xFFFFFFFF {
-			done = len(b)%f.mps != 0 || len(b) == 0
+			done = len(b)%f.MPS != 0 || len(b) == 0
 		} else {
 			done = len(f.dataBuf) >= int(h.Length)
-			if !done && len(b)%f.mps != 0 {
+			if !done && len(b)%f.MPS != 0 {
 				f.t.Errorf("short packet mid data phase (write of %d bytes)", len(b))
 			}
 		}
@@ -92,7 +102,7 @@ func (f *fakeDev) BulkWrite(b []byte, _ time.Duration) (int, error) {
 	}
 	op, tx, par := h.Code, h.TxID, ptp.DecodeParams(b)
 	switch op {
-	case ptp.OpSendObjectInfo, ptp.OpSendObject, ptp.OpSetObjectPropValue:
+	case ptp.OpSendObjectInfo, ptp.OpSendObject, ptp.OpSetObjectPropValue, ptp.OpSendPartialObject:
 		f.inData, f.dataBuf, f.cmdOp, f.cmdTx, f.cmdPar = true, nil, op, tx, par
 	default:
 		f.handle(op, tx, par, nil)
@@ -100,17 +110,17 @@ func (f *fakeDev) BulkWrite(b []byte, _ time.Duration) (int, error) {
 	return len(b), nil
 }
 
-func (f *fakeDev) queue(c []byte) {
+func (f *Fake) queue(c []byte) {
 	f.out = append(f.out, c)
-	if len(c)%f.mps == 0 {
+	if len(c)%f.MPS == 0 {
 		f.out = append(f.out, []byte{})
 	}
 }
 
-func (f *fakeDev) data(op uint16, tx uint32, payload []byte) {
+func (f *Fake) data(op uint16, tx uint32, payload []byte) {
 	c := make([]byte, ptp.HeaderSize+len(payload))
 	l := uint32(len(c))
-	if f.unknownLen && op == ptp.OpGetObject {
+	if f.UnknownLen && op == ptp.OpGetObject {
 		l = 0xFFFFFFFF
 	}
 	ptp.EncodeHeader(c, ptp.Header{Length: l, Type: ptp.TypeData, Code: op, TxID: tx})
@@ -118,11 +128,11 @@ func (f *fakeDev) data(op uint16, tx uint32, payload []byte) {
 	f.queue(c)
 }
 
-func (f *fakeDev) resp(code uint16, tx uint32, params ...uint32) {
+func (f *Fake) resp(code uint16, tx uint32, params ...uint32) {
 	f.queue(ptp.EncodeOperation(ptp.TypeResponse, code, tx, params...))
 }
 
-func (f *fakeDev) handle(op uint16, tx uint32, p []uint32, in []byte) {
+func (f *Fake) handle(op uint16, tx uint32, p []uint32, in []byte) {
 	ok := func(params ...uint32) { f.resp(ptp.RespOK, tx, params...) }
 	obj := func(h uint32) *fobj {
 		o := f.objs[h]
@@ -140,7 +150,8 @@ func (f *fakeDev) handle(op uint16, tx uint32, p []uint32, in []byte) {
 		e.String("android.com: 1.0;")
 		e.U16(0)
 		ops := []uint16{ptp.OpGetDeviceInfo, ptp.OpOpenSession, ptp.OpGetStorageIDs, ptp.OpGetObjectHandles,
-			ptp.OpGetObjectInfo, ptp.OpGetObject, ptp.OpSendObjectInfo, ptp.OpSendObject, ptp.OpGetPartialObject64}
+			ptp.OpGetObjectInfo, ptp.OpGetObject, ptp.OpSendObjectInfo, ptp.OpSendObject, ptp.OpGetPartialObject64,
+			ptp.OpBeginEditObject, ptp.OpSendPartialObject, ptp.OpTruncateObject, ptp.OpEndEditObject}
 		e.U32(uint32(len(ops)))
 		for _, o := range ops {
 			e.U16(o)
@@ -231,6 +242,43 @@ func (f *fakeDev) handle(op uint16, tx uint32, p []uint32, in []byte) {
 	case ptp.OpSendObject:
 		f.objs[f.sendTarget].data = append([]byte(nil), in...)
 		ok()
+	case ptp.OpBeginEditObject:
+		if o := obj(p[0]); o != nil {
+			if f.editing == nil {
+				f.editing = map[uint32]bool{}
+			}
+			f.editing[o.h] = true
+			ok()
+		}
+	case ptp.OpSendPartialObject, ptp.OpTruncateObject:
+		o := obj(p[0])
+		if o == nil {
+			return
+		}
+		if !f.editing[o.h] {
+			f.resp(ptp.RespGeneralError, tx)
+			return
+		}
+		off := int(uint64(p[1]) | uint64(p[2])<<32)
+		if op == ptp.OpTruncateObject {
+			if off < len(o.data) {
+				o.data = o.data[:off]
+			} else {
+				o.data = append(o.data, make([]byte, off-len(o.data))...)
+			}
+			ok()
+			return
+		}
+		if end := off + len(in); end > len(o.data) {
+			o.data = append(o.data, make([]byte, end-len(o.data))...)
+		}
+		copy(o.data[off:], in)
+		ok(uint32(len(in)))
+	case ptp.OpEndEditObject:
+		if o := obj(p[0]); o != nil {
+			delete(f.editing, o.h)
+			ok()
+		}
 	case ptp.OpSetObjectPropValue:
 		if o := obj(p[0]); o != nil {
 			o.name = ptp.NewDecoder(in).String()
@@ -251,7 +299,7 @@ func (f *fakeDev) handle(op uint16, tx uint32, p []uint32, in []byte) {
 	}
 }
 
-func (f *fakeDev) deleteTree(h uint32) {
+func (f *Fake) deleteTree(h uint32) {
 	for c, o := range f.objs {
 		if o.parent == h {
 			f.deleteTree(c)

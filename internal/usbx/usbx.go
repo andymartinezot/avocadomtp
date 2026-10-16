@@ -248,7 +248,7 @@ func (c *Context) Open(cand *Candidate) (*Device, error) {
 	if err != nil {
 		C.libusb_close(h)
 		if errors.Is(err, ErrAccess) || errors.Is(err, ErrBusy) {
-			return nil, fmt.Errorf("claim MTP interface: %w (another app such as Image Capture, Android File Transfer, OpenMTP or MacDroid may be using the phone)", err)
+			return nil, fmt.Errorf("claim MTP interface: %w (another app such as the avocado daemon, Android File Transfer, OpenMTP or MacDroid may be using the phone)", err)
 		}
 		return nil, fmt.Errorf("claim MTP interface: %w", err)
 	}
@@ -311,4 +311,17 @@ func (d *Device) Close() {
 	C.libusb_release_interface(d.h, C.int(d.iface))
 	C.libusb_close(d.h)
 	d.h = nil
+}
+
+// ResetRequest sends the PTP class-specific "Device Reset Request", which
+// aborts any transaction the device is stuck in and closes its session.
+func (d *Device) ResetRequest() error {
+	rc := C.libusb_control_transfer(d.h, 0x21, 0x66, 0, C.uint16_t(d.iface), nil, 0, 2000)
+	return check(rc)
+}
+
+// PortReset performs a USB port reset. The device re-enumerates, so the
+// Device must be closed and opened again afterwards.
+func (d *Device) PortReset() error {
+	return check(C.libusb_reset_device(d.h))
 }

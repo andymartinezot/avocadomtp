@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +10,13 @@ import (
 	"path"
 	"strings"
 
-	"github.com/andymartinezot/avocadomtp/internal/usbx"
+	"github.com/andymartinezot/avocadomtp/internal/device"
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
 const usage = `avocado — Android file transfer over USB (MTP)
 
-Usage: avocado [-d SERIAL] <command> [args]
+Usage: avocado [-d SERIAL] [--direct] <command> [args]
 
 Commands:
   devices                         list connected MTP devices
@@ -30,6 +29,13 @@ Commands:
   mv SRC DST                      rename or move
   shell                           interactive session (cd, ls, pull, push, ...)
 
+Background daemon (owns the USB connection; used by the CLI and Finder):
+  daemon [--no-mount]             run in the foreground; mounts each storage as a
+                                  Finder volume (needs FUSE-T) unless --no-mount
+  daemon install | uninstall      start at login (LaunchAgent) / remove it
+  daemon status                   show what the daemon is connected to
+
+When the daemon runs, commands go through it; --direct talks to USB instead.
 Remote paths start with the storage name, e.g.
   avocado ls -l "/Internal shared storage/DCIM/Camera"
   avocado push -r ~/Music "/SD card/Music"
@@ -38,28 +44,37 @@ Flags may appear anywhere; use -- before a path that starts with "-".
 
 func main() {
 	args := os.Args[1:]
-	serial := ""
-	if len(args) >= 2 && args[0] == "-d" {
-		serial, args = args[1], args[2:]
+	serial, direct := "", false
+	for len(args) > 0 {
+		if len(args) >= 2 && args[0] == "-d" {
+			serial, args = args[1], args[2:]
+		} else if args[0] == "--direct" {
+			direct, args = true, args[1:]
+		} else {
+			break
+		}
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Print(usage)
 		return
 	}
-	if err := runMain(serial, args); err != nil {
+	if err := runMain(serial, direct, args); err != nil {
 		fmt.Fprintln(os.Stderr, "avocado:", err)
 		os.Exit(1)
 	}
 }
 
-func runMain(serial string, args []string) error {
-	if args[0] == "devices" {
+func runMain(serial string, direct bool, args []string) error {
+	switch args[0] {
+	case "devices":
 		return listDevices(os.Stdout)
+	case "daemon":
+		return daemonCmd(serial, args[1:])
 	}
 	if _, ok := commands[args[0]]; !ok && args[0] != "shell" {
 		return fmt.Errorf("unknown command %q (see avocado --help)", args[0])
 	}
-	c, err := connect(serial)
+	c, err := connect(serial, direct)
 	if err != nil {
 		return err
 	}
@@ -73,17 +88,12 @@ func runMain(serial string, args []string) error {
 }
 
 func listDevices(w io.Writer) error {
-	u, err := usbx.NewContext()
-	if err != nil {
-		return err
-	}
-	defer u.Close()
-	cands, err := u.FindMTP()
+	cands, err := device.List()
 	if err != nil {
 		return err
 	}
 	if len(cands) == 0 {
-		return errors.New(noDeviceHelp)
+		return device.ErrNoDevice
 	}
 	for _, c := range cands {
 		fmt.Fprintf(w, "%-16s %s\n", c.Serial, c)

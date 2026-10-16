@@ -3,105 +3,69 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"path"
 
-	"github.com/andymartinezot/avocadomtp/internal/mtp"
-	"github.com/andymartinezot/avocadomtp/internal/usbx"
+	"github.com/andymartinezot/avocadomtp/internal/daemon"
+	"github.com/andymartinezot/avocadomtp/internal/device"
+	"github.com/andymartinezot/avocadomtp/internal/remote"
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
-const noDeviceHelp = `no MTP device found.
-  • Unlock the phone and connect it with a data-capable USB cable.
-  • In the "USB" notification on the phone choose "File transfer" (not "Charging only").
-  • Quit Android File Transfer, OpenMTP or MacDroid if they are running.`
-
-// client is a connected phone.
+// client is a connected phone, reached through the daemon or directly over USB.
 type client struct {
-	serial string
-	usb    *usbx.Context
-	dev    *usbx.Device
-	cand   *usbx.Candidate
-	s      *mtp.Session
-	fs     *vfs.FS
+	r   remote.Remote
+	fs  *vfs.FS
+	via string
 }
 
-// findDevice picks the device matching serial (or the only/first one).
-func findDevice(u *usbx.Context, serial string) (*usbx.Candidate, error) {
-	cands, err := u.FindMTP()
-	if err != nil {
-		return nil, err
-	}
-	if len(cands) == 0 {
-		return nil, errors.New(noDeviceHelp)
-	}
-	if serial == "" {
-		return cands[0], nil
-	}
-	for _, c := range cands {
-		if c.Serial == serial {
-			return c, nil
+// connect prefers a running daemon (which owns the USB connection) and falls
+// back to opening the phone directly.
+func connect(serial string, direct bool) (*client, error) {
+	if !direct {
+		dc, err := daemon.Dial(daemon.DefaultSocketPath())
+		if err == nil {
+			st, err := dc.Status(context.Background())
+			if err != nil {
+				dc.Close()
+				return nil, err
+			}
+			if !st.Connected {
+				dc.Close()
+				return nil, errors.New("the avocado daemon is running but has no phone (" + st.Error + ")")
+			}
+			return newClient(dc, "daemon"), nil
+		}
+		if !errors.Is(err, daemon.ErrNotRunning) {
+			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("no MTP device with serial %q (see `avocado devices`)", serial)
-}
-
-func connect(serial string) (*client, error) {
-	c := &client{serial: serial}
-	if err := c.open(); err != nil {
-		c.close()
+	d, err := device.Open(serial)
+	if err != nil {
 		return nil, err
 	}
-	return c, nil
+	return newClient(d, "USB (direct)"), nil
 }
 
-func (c *client) open() error {
-	u, err := usbx.NewContext()
-	if err != nil {
-		return err
-	}
-	c.usb = u
-	cand, err := findDevice(u, c.serial)
-	if err != nil {
-		return err
-	}
-	dev, err := u.Open(cand)
-	if err != nil {
-		return err
-	}
-	c.cand, c.dev = cand, dev
-	s, err := mtp.Open(dev, dev.MaxPacket)
-	if err != nil {
-		return fmt.Errorf("start MTP session with %s: %w (is the phone unlocked?)", cand, err)
-	}
-	c.s = s
-	c.fs = vfs.New(s)
-	return nil
+func newClient(r remote.Remote, via string) *client {
+	v := vfs.New(r)
+	v.DeviceName = r.Device().Model
+	return &client{r: r, fs: v, via: via}
 }
 
 func (c *client) close() {
-	if c.s != nil {
-		_ = c.s.Close()
-		c.s = nil
-	}
-	if c.dev != nil {
-		c.dev.Close()
-		c.dev = nil
-	}
-	if c.usb != nil {
-		c.usb.Close()
-		c.usb = nil
+	if c.r != nil {
+		c.r.Close()
+		c.r = nil
 	}
 }
 
 // healthy reconnects if the session became unusable after an aborted transfer.
 func (c *client) healthy() error {
-	if c.s != nil && c.s.Err() == nil {
-		return nil
+	if err := c.r.Healthy(); err != nil {
+		return err
 	}
-	c.close()
-	return c.open()
+	return nil
 }
 
 // parentOf resolves the directory containing p.
