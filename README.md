@@ -345,8 +345,9 @@ scripts/build-app.sh             # ad-hoc signed; DEVELOPMENT_TEAM=<your team> t
 cp -R macos/build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
 ```
 
-It also writes `macos/build/AvocadoMTP-<version>.zip`. The version comes from `MARKETING_VERSION` in
-`macos/project.yml` (or `VERSION=1.2.3`).
+It also writes `macos/build/AvocadoMTP.zip` and its `.sha256`. The version comes from
+`MARKETING_VERSION` in `macos/project.yml` (or `VERSION=1.2.3`); `UNIVERSAL=1` builds for Apple
+Silicon and Intel, as releases do.
 
 ## Finder volumes
 
