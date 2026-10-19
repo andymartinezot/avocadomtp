@@ -1,11 +1,3 @@
 bin/
 *.avocadomtp-part
 .DS_Store
-
-# Claude Code harness: private, local-only state (the repo is public).
-# memory/ holds personal identifiers; Claude reads it through a symlink from
-# ~/.claude/projects/<project>/memory. Session logs are narrative, not code.
-memory/
-docs/sessions/*
-!docs/sessions/README.md
-.claude/settings.local.json
