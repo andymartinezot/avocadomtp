@@ -32,7 +32,19 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 
 ## Quick start
 
+Needs macOS and [Homebrew](https://brew.sh). Pick one:
+
+**Option A: one command.** Installs the dependencies, builds, and starts the service. It clones the
+repository into `~/avocadomtp` (or runs from your clone with `./install.sh`). Run it again to update.
+
 ```sh
+curl -fsSL https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/install.sh | bash
+```
+
+**Option B: step by step.** The same four steps, from a clone:
+
+```sh
+git clone https://github.com/andymartinezot/avocadomtp.git && cd avocadomtp
 brew install go libusb            # build dependencies
 brew install --cask fuse-t        # Finder volumes (free, no kernel extension)
 go build -o bin/avocadomtp ./cmd/avocadomtp
