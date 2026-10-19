@@ -1,0 +1,31 @@
+name: AvocadoMTP
+options:
+  bundleIdPrefix: com.andymartinezot
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 3Y7GU6KM7V
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  AvocadoMTP:
+    type: application
+    platform: macOS
+    sources: [AvocadoMTP]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.andymartinezot.avocadomtp.menubar
+        PRODUCT_NAME: AvocadoMTP
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AvocadoMTP
+        INFOPLIST_KEY_LSUIElement: YES # menu bar only, no Dock icon
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_NSHumanReadableCopyright: "AvocadoMTP"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Not sandboxed: the app talks to the daemon's Unix socket in
+        # ~/Library/Application Support/AvocadoMTP and runs the avocadomtp CLI.
+        ENABLE_APP_SANDBOX: NO

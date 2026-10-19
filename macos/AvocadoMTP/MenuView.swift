@@ -1,0 +1,191 @@
+import SwiftUI
+
+/// The window that opens from the menu bar icon.
+struct MenuView: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            Divider()
+            if !model.installed {
+                notInstalled
+            } else if !model.serviceRunning {
+                Label("The service is stopped. Turn it on to see your phone.", systemImage: "pause.circle")
+                    .foregroundStyle(.secondary)
+            } else if let st = model.state {
+                phone(st)
+                if !st.mounts.isEmpty || st.connected { volumes(st) }
+                if !st.transfers.isEmpty { transfers(st) }
+            }
+            if let msg = model.message {
+                Label(msg, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            footer
+        }
+        .padding(14)
+        .frame(width: 340)
+    }
+
+    // MARK: Sections
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            Image(nsImage: AvocadoIcon.template(active: model.state?.connected == true))
+            Text("AvocadoMTP").font(.headline)
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { model.serviceRunning },
+                set: { model.setService(running: $0) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .disabled(model.busy || !model.installed)
+            .help(model.serviceRunning ? "Stop the service (volumes unmount)" : "Start the service")
+        }
+    }
+
+    private var notInstalled: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("The service isn't installed yet.", systemImage: "wrench.and.screwdriver")
+            Text("Run `avocadomtp daemon install` once in Terminal.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func phone(_ st: ActivityState) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: st.connected ? "iphone.gen3" : "iphone.gen3.slash")
+                .font(.title2)
+                .foregroundStyle(st.connected ? Color.accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                if st.connected, let d = st.device {
+                    Text(d.model).font(.body.weight(.semibold))
+                    Text(d.manufacturer).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("No phone connected").font(.body.weight(.semibold))
+                    Text("Unlock it and choose “File transfer” in its USB notification.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            if st.connected, st.rateIn + st.rateOut > 0 {
+                VStack(alignment: .trailing, spacing: 1) {
+                    if st.rateIn > 0 { Text("↓ " + Format.rate(st.rateIn)) }
+                    if st.rateOut > 0 { Text("↑ " + Format.rate(st.rateOut)) }
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func volumes(_ st: ActivityState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Volumes").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                if st.connected {
+                    Button("Mount all") { model.mountAll() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(model.busy)
+                }
+            }
+            if st.mounts.isEmpty {
+                Text("Nothing mounted").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(st.mounts) { m in
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive.fill").foregroundStyle(.secondary)
+                    Button {
+                        model.reveal(m)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(m.name).foregroundStyle(.primary)
+                            Text(m.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open in Finder")
+                    Spacer()
+                    Button {
+                        model.eject(m)
+                    } label: {
+                        Image(systemName: "eject.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.busy)
+                    .help("Eject \(m.name)")
+                }
+            }
+        }
+    }
+
+    private func transfers(_ st: ActivityState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Transfers").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(st.transfers) { t in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: t.toPhone ? "arrow.up.circle" : "arrow.down.circle")
+                            .foregroundStyle(.secondary)
+                            .help(t.toPhone ? "To the phone" : "From the phone")
+                        Text((t.path as NSString).lastPathComponent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text(status(t))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(t.state == "failed" ? .red : .secondary)
+                    }
+                    if let p = t.progress, t.state == "active" {
+                        ProgressView(value: p).controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    private func status(_ t: ActivityState.Transfer) -> String {
+        switch t.state {
+        case "done": return "Done · " + Format.bytes(t.bytes)
+        case "failed": return "Failed"
+        default:
+            if t.total > 0 {
+                return "\(Format.bytes(t.bytes)) of \(Format.bytes(t.total)) · \(Format.rate(t.rate))"
+            }
+            return Format.bytes(t.bytes) + " · " + Format.rate(t.rate)
+        }
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Start at login", isOn: Binding(
+                get: { model.autostart },
+                set: { model.setAutostart($0) }
+            ))
+            .disabled(model.busy || !model.installed)
+            .help("Start the service and this menu when you log in")
+            HStack {
+                Button("Show log") { model.openLog() }
+                Spacer()
+                Button("Quit menu") { NSApp.terminate(nil) }
+                    .help("Quit this menu; the service keeps running")
+            }
+            .buttonStyle(.link)
+            .font(.callout)
+        }
+    }
+}

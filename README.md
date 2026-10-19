@@ -279,6 +279,32 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 
 ---
 
+## Menu bar app
+
+`macos/` holds **AvocadoMTP.app**, a SwiftUI menu bar app (no Dock icon) that talks to the daemon:
+
+| In the menu | What it does |
+|---|---|
+| 🥑 icon | outline when idle, filled pit when a phone is connected, total speed while copying |
+| On/off switch | starts or stops the service (`avocadomtp daemon start/stop`) |
+| Phone | model and maker, or how to connect it |
+| Volumes | name and path: click to open in Finder, ⏏ to eject, "Mount all" to bring them back |
+| Transfers | file, direction, progress bar, speed; done / failed |
+| Start at login | one switch for the service's autostart and the menu's own login item |
+
+It holds a single `watch` connection: snapshots arrive when something changes, so the app uses no CPU
+while idle (≈14 MB of memory). Build and install it with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+
+```sh
+brew install xcodegen
+cd macos && xcodegen generate
+xcodebuild -project AvocadoMTP.xcodeproj -scheme AvocadoMTP -configuration Release \
+  -derivedDataPath build -allowProvisioningUpdates build
+cp -R build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
+```
+
+Set `DEVELOPMENT_TEAM` in `macos/project.yml` to your own team (a free Apple account is enough for your Mac).
+
 ## Finder volumes
 
 | Behavior | Why |
@@ -310,6 +336,7 @@ internal/daemon/      daemon server, socket protocol, client, LaunchAgent
 internal/fusefs/      FUSE file system, mount manager, metadata shadow store
 internal/errcode/     MTP/USB errors → POSIX errno
 internal/bufpool/     pooled transfer buffers
+macos/                menu bar app (SwiftUI, XcodeGen project.yml)
 docs/index.html       interactive architecture & performance page
 ```
 
@@ -337,5 +364,6 @@ docs/index.html       interactive architecture & performance page
 - [x] Resource optimization: hotplug, adaptive read-ahead, lazy staging, buffer pools
 - [x] Service control: start / stop / start-at-login
 - [x] Daemon API for the menu bar: `watch` event stream, mounts, eject / mount
-- [ ] Menu bar app (SwiftUI): mounts, paths, live transfers and speed, eject, on/off
+- [x] Menu bar app (SwiftUI): mounts, paths, live transfers and speed, eject, on/off, start at login
+- [ ] App icon and bundling the daemon inside the app
 - [ ] Distribution: Homebrew tap, then a signed `.app` in a DMG
