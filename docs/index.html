@@ -209,7 +209,7 @@ and a small background daemon mounts each phone storage as its own disk through 
   <div class="card">
     <svg viewBox="0 0 640 520" role="img" aria-label="Architecture diagram">
       <g class="group"><rect x="10" y="10" width="620" height="390" rx="12"/><text x="24" y="30">macOS</text></g>
-      <g class="group"><rect x="150" y="150" width="470" height="240" rx="10"/><text x="164" y="168">avocado daemon · LaunchAgent</text></g>
+      <g class="group"><rect x="150" y="150" width="470" height="240" rx="10"/><text x="164" y="168">avocadomtp daemon · LaunchAgent</text></g>
 
       <path class="edge" data-e="finder-kernel" d="M110 80 L110 120 L110 200"/>
       <path class="edge" data-e="kernel-fusefs" d="M110 250 L110 270 L200 270"/>
@@ -221,7 +221,7 @@ and a small background daemon mounts each phone storage as its own disk through 
       <path class="edge" data-e="usb-phone" d="M380 480 L380 496 L540 496"/>
 
       <g class="node" data-n="finder" tabindex="0"><rect x="30" y="40" width="160" height="44" rx="9"/><text x="110" y="61" text-anchor="middle">Finder · apps</text><text class="s" x="110" y="76" text-anchor="middle">drag & drop, Quick Look</text></g>
-      <g class="node" data-n="cli" tabindex="0"><rect x="410" y="40" width="160" height="44" rx="9"/><text x="490" y="61" text-anchor="middle">avocado CLI</text><text class="s" x="490" y="76" text-anchor="middle">ls · pull · push · shell</text></g>
+      <g class="node" data-n="cli" tabindex="0"><rect x="410" y="40" width="160" height="44" rx="9"/><text x="490" y="61" text-anchor="middle">avocadomtp CLI</text><text class="s" x="490" y="76" text-anchor="middle">ls · pull · push · shell</text></g>
       <g class="node" data-n="kernel" tabindex="0"><rect x="30" y="200" width="110" height="50" rx="9"/><text x="85" y="222" text-anchor="middle">FUSE-T</text><text class="s" x="85" y="238" text-anchor="middle">FSKit / NFS</text></g>
       <g class="node" data-n="fusefs" tabindex="0"><rect x="200" y="245" width="120" height="44" rx="9"/><text x="260" y="266" text-anchor="middle">fusefs</text><text class="s" x="260" y="281" text-anchor="middle">FS per storage</text></g>
       <g class="node" data-n="socket" tabindex="0"><rect x="430" y="200" width="120" height="50" rx="9"/><text x="490" y="222" text-anchor="middle">socket server</text><text class="s" x="490" y="238" text-anchor="middle">framed JSON</text></g>
@@ -276,8 +276,8 @@ and a small background daemon mounts each phone storage as its own disk through 
 <h2>Quick start</h2>
 <div class="card"><pre>brew install go libusb
 brew install --cask fuse-t
-go build -o bin/avocado ./cmd/avocado
-./bin/avocado daemon install     # starts at login, mounts the phone in Finder</pre>
+go build -o bin/avocadomtp ./cmd/avocadomtp
+./bin/avocadomtp daemon install     # starts at login, mounts the phone in Finder</pre>
 <p class="sub" style="margin:12px 0 0">Then turn on <b>System Settings → General → Login Items &amp; Extensions → File System Extensions → fuse-t</b>, unlock the phone and choose <b>File transfer</b>.</p></div>
 
 <footer>AvocadoMTP · <a href="https://github.com/andymartinezot/avocadomcp">source on GitHub</a></footer>
@@ -289,7 +289,7 @@ go build -o bin/avocado ./cmd/avocado
 (function () {
   const root = document.documentElement;
   let saved = null;
-  try { saved = localStorage.getItem("avocado-theme"); } catch (e) {}
+  try { saved = localStorage.getItem("avocadomtp-theme"); } catch (e) {}
   const apply = (t) => {
     if (t === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
     document.querySelectorAll(".theme button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
@@ -297,7 +297,7 @@ go build -o bin/avocado ./cmd/avocado
   apply(saved || "auto");
   document.querySelectorAll(".theme button").forEach(b => b.addEventListener("click", () => {
     apply(b.dataset.t);
-    try { localStorage.setItem("avocado-theme", b.dataset.t); } catch (e) {}
+    try { localStorage.setItem("avocadomtp-theme", b.dataset.t); } catch (e) {}
   }));
 })();
 
@@ -325,7 +325,7 @@ const comps = {
     "Writes are staged locally and uploaded once, on close.",
     "Adaptive read-ahead (128 KiB → 8 MiB) for reads.",
     "._* and .DS_Store live in memory, never on the phone."] },
-  cli: { t: "avocado CLI", p: "cmd/avocado", edges: ["cli-socket"], items: [
+  cli: { t: "avocadomtp CLI", p: "cmd/avocadomtp", edges: ["cli-socket"], items: [
     "ls, pull, push, rm, mkdir, mv and an interactive shell.",
     "Talks to the daemon when it runs; --direct uses USB itself."] },
   socket: { t: "Socket server", p: "internal/daemon", edges: ["cli-socket", "socket-vfs"], items: [

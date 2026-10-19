@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/daemon"
 	"github.com/andymartinezot/avocadomtp/internal/device"
 	"github.com/andymartinezot/avocadomtp/internal/fusefs"
@@ -34,18 +35,57 @@ func daemonCmd(serial string, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("installed %s\nthe daemon now starts at login; log: %s\n", p, daemon.LogPath())
-		return nil
+		fmt.Printf("installed %s and started the daemon\nlog: %s\n", p, daemon.LogPath())
+		return printAgent()
 	case "uninstall":
 		if err := daemon.Uninstall(); err != nil {
 			return err
 		}
-		fmt.Println("daemon stopped and removed from login items")
+		fmt.Println("daemon stopped and removed")
 		return nil
+	case "start":
+		if err := daemon.Start(); err != nil {
+			return err
+		}
+		return printAgent()
+	case "stop":
+		if err := daemon.Stop(); err != nil {
+			return err
+		}
+		return printAgent()
+	case "autostart":
+		if len(args) < 2 || (args[1] != "on" && args[1] != "off") {
+			return fmt.Errorf("usage: avocadomtp daemon autostart on|off")
+		}
+		if err := daemon.SetAutostart(args[1] == "on"); err != nil {
+			return err
+		}
+		return printAgent()
 	case "status":
+		if err := printAgent(); err != nil {
+			return err
+		}
 		return daemonStatus(socket)
 	}
-	return fmt.Errorf("unknown daemon command %q (run, install, uninstall, status)", sub)
+	return fmt.Errorf("unknown daemon command %q (run, install, uninstall, start, stop, autostart, status)", sub)
+}
+
+func printAgent() error {
+	st := daemon.State()
+	switch {
+	case !st.Installed:
+		fmt.Println("daemon:    not installed (avocadomtp daemon install)")
+	case st.Running:
+		fmt.Printf("daemon:    running (pid %d)\n", st.PID)
+	default:
+		fmt.Println("daemon:    stopped")
+	}
+	auto := "off"
+	if st.Autostart {
+		auto = "on"
+	}
+	fmt.Printf("autostart: %s (start at login)\n", auto)
+	return nil
 }
 
 func runDaemon(serial, socket string, mount bool) error {
@@ -53,12 +93,14 @@ func runDaemon(serial, socket string, mount bool) error {
 	if err != nil {
 		return err
 	}
-	logger := log.New(os.Stderr, "avocado: ", log.LstdFlags)
+	logger := log.New(os.Stderr, "avocadomtp: ", log.LstdFlags)
 	logger.Printf("listening on %s", socket)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	hub := activity.NewHub()
 	srv := &daemon.Server{
 		Log:  logger,
+		Hub:  hub,
 		Open: func() (daemon.Phone, error) { return device.Open(serial) },
 	}
 	if changes, err := usbx.WatchHotplug(ctx); err == nil {
@@ -74,6 +116,9 @@ func runDaemon(serial, socket string, mount bool) error {
 		logger.Printf("Finder volumes disabled: FUSE-T is not installed (brew install --cask fuse-t)")
 	default:
 		mounts = newMountManager(logger)
+		mounts.Activity = hub
+		srv.Eject = mounts.Eject
+		srv.Remount = func() error { return mounts.Remount(ctx, srv.Remote()) }
 		srv.OnConnect = func() {
 			if err := mounts.MountAll(ctx, srv.Remote()); err != nil {
 				logger.Printf("mount: %v", err)
@@ -100,12 +145,12 @@ func newMountManager(logger *log.Logger) *fusefs.Manager {
 		TmpDir: filepath.Join(home, "Library", "Caches", "AvocadoMTP", "staging"),
 		Log:    logger,
 	}
-	if os.Getenv("AVOCADO_MOUNT_ROOT") != "" {
-		m.Root = os.Getenv("AVOCADO_MOUNT_ROOT")
+	if os.Getenv("AVOCADOMTP_MOUNT_ROOT") != "" {
+		m.Root = os.Getenv("AVOCADOMTP_MOUNT_ROOT")
 	} else {
 		m.FSKit = fusefs.FSKitEnabled()
 	}
-	if os.Getenv("AVOCADO_FUSE_DEBUG") != "" {
+	if os.Getenv("AVOCADOMTP_FUSE_DEBUG") != "" {
 		m.Debug = logger
 	}
 	if m.FSKit {
@@ -121,7 +166,7 @@ func daemonStatus(socket string) error {
 	c, err := daemon.Dial(socket)
 	if err != nil {
 		if errors.Is(err, daemon.ErrNotRunning) {
-			return fmt.Errorf("daemon not running (start it with `avocado daemon` or `avocado daemon install`)")
+			return nil // printAgent already said it's stopped
 		}
 		return err
 	}
@@ -130,18 +175,23 @@ func daemonStatus(socket string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("daemon:   running (%s)\n", socket)
 	if !st.Connected {
-		fmt.Printf("phone:    not connected (%s)\n", st.Error)
+		fmt.Printf("phone:     not connected (%s)\n", st.Error)
 		return nil
 	}
-	fmt.Printf("phone:    %s %s (serial %s)\n", st.Device.Manufacturer, st.Device.Model, st.Device.Serial)
+	fmt.Printf("phone:     %s %s (serial %s)\n", st.Device.Manufacturer, st.Device.Model, st.Device.Serial)
 	for _, s := range st.Storages {
 		ro := ""
 		if s.ReadOnly {
 			ro = " (read-only)"
 		}
-		fmt.Printf("storage:  %-28s id %08X  %s free of %s%s\n", s.Name, s.ID, human(int64(s.Free)), human(int64(s.Capacity)), ro)
+		fmt.Printf("storage:   %-26s %9s free of %s%s\n", s.Name, human(int64(s.Free)), human(int64(s.Capacity)), ro)
+	}
+	for _, m := range st.Mounts {
+		fmt.Printf("mounted:   %s (%s)\n", m.Path, m.Backend)
+	}
+	if s := st.Stats; s != nil {
+		fmt.Printf("traffic:   %s in · %s out · %d MTP operations\n", human(int64(s.BytesIn)), human(int64(s.BytesOut)), s.Ops)
 	}
 	return nil
 }

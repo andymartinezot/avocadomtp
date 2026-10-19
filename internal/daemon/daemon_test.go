@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/device"
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/mtp/mtptest"
@@ -31,6 +33,7 @@ func (fakePhone) Healthy() error { return nil }
 func (fakePhone) Close()         {}
 
 type harness struct {
+	srv     *Server
 	socket  string
 	mu      sync.Mutex
 	present bool
@@ -48,7 +51,7 @@ func startWith(t *testing.T, present bool, changes <-chan struct{}) *harness {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	h := &harness{socket: filepath.Join(dir, "s"), present: present}
 	fake := mtptest.New(t)
-	srv := &Server{Poll: 50 * time.Millisecond, Changes: changes, Open: func() (Phone, error) {
+	srv := &Server{Poll: 50 * time.Millisecond, Changes: changes, Hub: activity.NewHub(), Open: func() (Phone, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		if !h.present {
@@ -62,6 +65,7 @@ func startWith(t *testing.T, present bool, changes <-chan struct{}) *harness {
 		}
 		return fakePhone{s}, nil
 	}}
+	h.srv = srv
 	ln, err := Listen(h.socket)
 	if err != nil {
 		t.Fatal(err)
@@ -293,5 +297,73 @@ func TestHotplugDriven(t *testing.T) {
 	}
 	if st, err := c.Status(ctx); err != nil || !st.Connected || st.Stats == nil {
 		t.Fatalf("status %+v %v", st, err)
+	}
+}
+
+func TestWatchStreamsTransfers(t *testing.T) {
+	h := start(t, true)
+	c := dial(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	snaps := make(chan activity.State, 64)
+	done := make(chan error, 1)
+	go func() {
+		done <- Watch(ctx, h.socket, func(st activity.State) {
+			select {
+			case snaps <- st:
+			default:
+			}
+		})
+	}()
+	// The stream reports the phone connecting.
+	deadline := time.After(3 * time.Second)
+	for connected := false; !connected; {
+		select {
+		case st := <-snaps:
+			connected = st.Connected && st.Device != nil && st.Device.Model == "Phone"
+		case <-deadline:
+			t.Fatal("watch never reported the phone")
+		}
+	}
+	// A CLI upload shows up as a transfer to the phone and finishes.
+	data := randBytes(3 * transferChunk)
+	if _, err := c.Upload(context.Background(), internal, ptp.HandleRoot, "big.bin", int64(len(data)), time.Now(), bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.After(3 * time.Second)
+	for {
+		select {
+		case st := <-snaps:
+			for _, tr := range st.Transfers {
+				if tr.Path == "big.bin" && tr.Direction == activity.ToPhone && tr.State == "done" && tr.Bytes == int64(len(data)) {
+					cancel()
+					if err := <-done; err != nil {
+						t.Fatalf("watch ended with %v", err)
+					}
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("upload never reported as a finished transfer")
+		}
+	}
+}
+
+func TestEjectAndMountOps(t *testing.T) {
+	h := start(t, true)
+	c := dial(t, h)
+	ctx := context.Background()
+	if err := c.Eject(ctx, internal); !errors.Is(err, syscall.ENOTSUP) {
+		t.Fatalf("eject without mounts: %v", err)
+	}
+	var ejected uint32
+	remounted := false
+	h.srv.Eject = func(id uint32) error { ejected = id; return nil }
+	h.srv.Remount = func() error { remounted = true; return nil }
+	if err := c.Eject(ctx, internal); err != nil || ejected != internal {
+		t.Fatalf("eject: %v (got %08X)", err, ejected)
+	}
+	if err := c.Remount(ctx); err != nil || !remounted {
+		t.Fatalf("mount: %v", err)
 	}
 }

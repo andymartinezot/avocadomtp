@@ -32,7 +32,7 @@ func connect(serial string, direct bool) (*client, error) {
 			}
 			if !st.Connected {
 				dc.Close()
-				return nil, errors.New("the avocado daemon is running but has no phone (" + st.Error + ")")
+				return nil, errors.New("the avocadomtp daemon is running but has no phone (" + st.Error + ")")
 			}
 			return newClient(dc, "daemon"), nil
 		}

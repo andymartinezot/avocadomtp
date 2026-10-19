@@ -1,4 +1,4 @@
-// Command avocado transfers files between macOS and Android phones over USB (MTP).
+// Command avocadomtp transfers files between macOS and Android phones over USB (MTP).
 package main
 
 import (
@@ -14,9 +14,9 @@ import (
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
-const usage = `avocado — Android file transfer over USB (MTP)
+const usage = `avocadomtp — Android file transfer over USB (MTP)
 
-Usage: avocado [-d SERIAL] [--direct] <command> [args]
+Usage: avocadomtp [-d SERIAL] [--direct] <command> [args]
 
 Commands:
   devices                         list connected MTP devices
@@ -28,17 +28,22 @@ Commands:
   mkdir [-p] PATH...              create folders
   mv SRC DST                      rename or move
   shell                           interactive session (cd, ls, pull, push, ...)
+  watch                           live view: phone, mounts, transfers and speed
+  eject STORAGE                   unmount one Finder volume (until "mount" or reconnect)
+  mount                           mount all Finder volumes again
 
 Background daemon (owns the USB connection; used by the CLI and Finder):
   daemon [--no-mount]             run in the foreground; mounts each storage as a
                                   Finder volume (needs FUSE-T) unless --no-mount
-  daemon install | uninstall      start at login (LaunchAgent) / remove it
-  daemon status                   show what the daemon is connected to
+  daemon install | uninstall      set up the background service (and start it) / remove it
+  daemon start | stop             start / stop the background service now
+  daemon autostart on|off         start the service at login (default on)
+  daemon status                   service state, phone, mounts and traffic
 
 When the daemon runs, commands go through it; --direct talks to USB instead.
 Remote paths start with the storage name, e.g.
-  avocado ls -l "/Internal shared storage/DCIM/Camera"
-  avocado push -r ~/Music "/SD card/Music"
+  avocadomtp ls -l "/Internal shared storage/DCIM/Camera"
+  avocadomtp push -r ~/Music "/SD card/Music"
 Flags may appear anywhere; use -- before a path that starts with "-".
 `
 
@@ -59,7 +64,7 @@ func main() {
 		return
 	}
 	if err := runMain(serial, direct, args); err != nil {
-		fmt.Fprintln(os.Stderr, "avocado:", err)
+		fmt.Fprintln(os.Stderr, "avocadomtp:", err)
 		os.Exit(1)
 	}
 }
@@ -70,9 +75,15 @@ func runMain(serial string, direct bool, args []string) error {
 		return listDevices(os.Stdout)
 	case "daemon":
 		return daemonCmd(serial, args[1:])
+	case "watch":
+		return watchCmd()
+	case "eject":
+		return ejectCmd(args[1:])
+	case "mount":
+		return mountCmd()
 	}
 	if _, ok := commands[args[0]]; !ok && args[0] != "shell" {
-		return fmt.Errorf("unknown command %q (see avocado --help)", args[0])
+		return fmt.Errorf("unknown command %q (see avocadomtp --help)", args[0])
 	}
 	c, err := connect(serial, direct)
 	if err != nil {

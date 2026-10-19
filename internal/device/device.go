@@ -104,7 +104,7 @@ func find(u *usbx.Context, serial string) (*usbx.Candidate, error) {
 			return c, nil
 		}
 	}
-	return nil, fmt.Errorf("no MTP device with serial %q (see `avocado devices`): %w", serial, ErrNoDevice)
+	return nil, fmt.Errorf("no MTP device with serial %q (see `avocadomtp devices`): %w", serial, ErrNoDevice)
 }
 
 // List enumerates connected MTP devices without claiming them.

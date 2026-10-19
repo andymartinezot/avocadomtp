@@ -17,6 +17,10 @@
 //   - A successful "download" response is followed by data frames, a
 //     zero-length frame, and a second JSON frame (Response) with the final
 //     status of the transfer.
+//   - A successful "watch" response is followed by a stream of JSON frames,
+//     each a complete activity.State snapshot (phone, mounts, transfers,
+//     speeds), sent on every change and once a second while transferring.
+//     The connection is dedicated to the stream; close it to stop.
 //
 // Errors carry a POSIX-style Code (ENOENT, ENOSPC, EACCES, EROFS, EBUSY,
 // ENOTSUP, ENODEV, EINVAL, EIO) so file system clients can map them directly.
@@ -32,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
 )
 
@@ -47,6 +52,9 @@ const (
 	OpDelete   = "delete"
 	OpRename   = "rename"
 	OpMove     = "move"
+	OpWatch    = "watch" // stream activity snapshots (menu bar)
+	OpEject    = "eject" // unmount one storage (Request.Storage)
+	OpMount    = "mount" // mount all storages again, including ejected ones
 )
 
 // Request is a client request. Handle 0xFFFFFFFF (with Storage) is a storage root.
@@ -75,6 +83,7 @@ type Response struct {
 	Handle    uint32             `json:"handle,omitempty"`
 	N         int                `json:"n,omitempty"`
 	Stats     *Stats             `json:"stats,omitempty"`
+	Mounts    []activity.Mount   `json:"mounts,omitempty"`
 }
 
 // Stats are cumulative transfer counters since the phone connected. Clients
@@ -114,13 +123,13 @@ const (
 	MaxRead = 16 << 20
 )
 
-// DefaultSocketPath is $AVOCADO_SOCKET or ~/Library/Application Support/AvocadoMTP/avocado.sock.
+// DefaultSocketPath is $AVOCADOMTP_SOCKET or ~/Library/Application Support/AvocadoMTP/avocado.sock.
 func DefaultSocketPath() string {
-	if p := os.Getenv("AVOCADO_SOCKET"); p != "" {
+	if p := os.Getenv("AVOCADOMTP_SOCKET"); p != "" {
 		return p
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "Application Support", "AvocadoMTP", "avocado.sock")
+	return filepath.Join(home, "Library", "Application Support", "AvocadoMTP", "avocadomtp.sock")
 }
 
 func writeFrame(w *bufio.Writer, b []byte) error {

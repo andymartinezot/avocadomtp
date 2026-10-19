@@ -6,7 +6,7 @@ static int LIBUSB_CALL hotplug_trampoline(libusb_context *ctx, libusb_device *de
 	return goHotplugCallback(ctx, dev, event, user);
 }
 
-int avocado_register_hotplug(libusb_context *ctx, libusb_hotplug_callback_handle *handle) {
+int avocadomtp_register_hotplug(libusb_context *ctx, libusb_hotplug_callback_handle *handle) {
 	return libusb_hotplug_register_callback(ctx,
 		LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT, 0,
 		LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,

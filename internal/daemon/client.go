@@ -10,13 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
 )
 
 // ErrNotRunning is returned by Dial when no daemon listens on the socket.
-var ErrNotRunning = errors.New("avocado daemon is not running")
+var ErrNotRunning = errors.New("avocadomtp daemon is not running")
 
 // Client talks to the daemon. It implements remote.Remote.
 type Client struct {
@@ -105,7 +106,7 @@ func (c *Client) cachedStatus(ctx context.Context) (*Response, error) {
 		return nil, err
 	}
 	if !resp.Connected {
-		return nil, &Error{Code: "ENODEV", Msg: "the avocado daemon has no phone connected: " + resp.Error}
+		return nil, &Error{Code: "ENODEV", Msg: "the avocadomtp daemon has no phone connected: " + resp.Error}
 	}
 	return resp, nil
 }
@@ -261,5 +262,50 @@ func (c *Client) Close() {
 	defer c.mu.Unlock()
 	if c.conn != nil {
 		c.conn.Close()
+	}
+}
+
+// Eject unmounts one storage until Remount or the next reconnect.
+func (c *Client) Eject(ctx context.Context, storage uint32) error {
+	_, err := c.simple(ctx, &Request{Op: OpEject, Storage: storage})
+	return err
+}
+
+// Remount mounts every storage again, including ejected ones.
+func (c *Client) Remount(ctx context.Context) error {
+	_, err := c.simple(ctx, &Request{Op: OpMount})
+	return err
+}
+
+// Watch streams activity snapshots to fn until ctx is cancelled or the daemon
+// goes away. It uses its own connection.
+func Watch(ctx context.Context, path string, fn func(activity.State)) error {
+	conn, err := net.DialTimeout("unix", path, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrNotRunning, err)
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	r, w := bufio.NewReader(conn), bufio.NewWriter(conn)
+	if err := writeJSON(w, &Request{Op: OpWatch}); err != nil {
+		return err
+	}
+	var resp Response
+	if err := readJSON(r, &resp); err != nil {
+		return err
+	}
+	if err := resp.err(); err != nil {
+		return err
+	}
+	for {
+		var st activity.State
+		if err := readJSON(r, &st); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		fn(st)
 	}
 }

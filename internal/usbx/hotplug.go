@@ -2,7 +2,7 @@ package usbx
 
 /*
 #include <libusb.h>
-int avocado_register_hotplug(libusb_context *ctx, libusb_hotplug_callback_handle *handle);
+int avocadomtp_register_hotplug(libusb_context *ctx, libusb_hotplug_callback_handle *handle);
 */
 import "C"
 
@@ -45,7 +45,7 @@ func WatchHotplug(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 	var handle C.libusb_hotplug_callback_handle
-	if err := check(C.avocado_register_hotplug(uctx, &handle)); err != nil {
+	if err := check(C.avocadomtp_register_hotplug(uctx, &handle)); err != nil {
 		C.libusb_exit(uctx)
 		return nil, err
 	}

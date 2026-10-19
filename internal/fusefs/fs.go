@@ -22,6 +22,7 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/bufpool"
 	"github.com/andymartinezot/avocadomtp/internal/errcode"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
@@ -60,6 +61,8 @@ type FS struct {
 
 	// Debug, if set, logs file system calls.
 	Debug *log.Logger
+	// Activity, if set, receives transfer progress (for the menu bar).
+	Activity *activity.Hub
 }
 
 func (f *FS) debugf(format string, args ...any) {
@@ -92,6 +95,8 @@ type handle struct {
 	blockOff  int64
 	window    int   // current read-ahead size
 	next      int64 // offset a sequential reader would ask for next
+	read      int64 // bytes served from the phone through this handle
+	xfer      *activity.Transfer
 
 	// writing: staged locally, uploaded on flush/release
 	tmp   *os.File
@@ -558,7 +563,34 @@ func (f *FS) Read(p string, buff []byte, ofst int64, fh uint64) int {
 	}
 	n := copy(buff, h.block[ofst-h.blockOff:])
 	h.next = ofst + int64(n)
+	h.read += int64(n)
+	if h.xfer != nil {
+		h.xfer.Add(n)
+	} else if h.read >= showReadsAfter {
+		// Large reads (copies, playback) show up as transfers; thumbnail and
+		// metadata reads stay invisible.
+		h.xfer = f.Activity.Begin(f.display(p), activity.FromPhone, int64(h.size))
+		h.xfer.Add(int(h.read))
+	}
 	return n
+}
+
+// showReadsAfter is how much of a file must be read before it is reported.
+const showReadsAfter = 4 << 20
+
+// display is the path shown to users: storage name plus the path inside it.
+func (f *FS) display(p string) string { return f.storage + p }
+
+// countingReader reports upload progress to a transfer.
+type countingReader struct {
+	r io.Reader
+	t *activity.Transfer
+}
+
+func (c *countingReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	c.t.Add(n)
+	return n, err
 }
 
 func (f *FS) Write(p string, buff []byte, ofst int64, fh uint64) int {
@@ -652,6 +684,7 @@ func (f *FS) Release(p string, fh uint64) int {
 		h.mu.Lock()
 		bufpool.Put(h.block)
 		h.block = nil
+		h.xfer.End(nil)
 		h.mu.Unlock()
 	}
 	return rc
@@ -692,12 +725,18 @@ func (f *FS) commit(fh uint64) int {
 	// failed upload never destroys the existing file.
 	uploadName := name
 	if oldErr == nil {
-		uploadName = ".avocado-" + name
+		uploadName = ".avocadomtp-" + name
 	}
 	if _, err := h.tmp.Seek(0, io.SeekStart); err != nil {
 		return errno(err)
 	}
-	newHandle, err := f.r.Upload(c, parent.StorageID, parent.Handle, uploadName, fi.Size(), fi.ModTime(), h.tmp)
+	var xfer *activity.Transfer // nil-safe; empty files (created before being filled) aren't shown
+	if fi.Size() > 0 {
+		xfer = f.Activity.Begin(f.display(h.path), activity.ToPhone, fi.Size())
+	}
+	newHandle, err := f.r.Upload(c, parent.StorageID, parent.Handle, uploadName, fi.Size(), fi.ModTime(),
+		&countingReader{r: h.tmp, t: xfer})
+	xfer.End(err)
 	f.vfs.Invalidate(parent.StorageID, parent.Handle)
 	if err != nil {
 		return errno(err)

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/bufpool"
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
@@ -43,7 +44,12 @@ type Server struct {
 	// comes and goes, e.g. to mount and unmount Finder volumes.
 	OnConnect    func()
 	OnDisconnect func()
-	events       chan bool
+	// Hub receives the phone state and serves "watch" streams (may be nil).
+	Hub *activity.Hub
+	// Eject and Remount implement the "eject" and "mount" operations (may be nil).
+	Eject   func(storageID uint32) error
+	Remount func() error
+	events  chan bool
 
 	mu       sync.RWMutex // write-locked only to swap the phone
 	phone    Phone
@@ -67,7 +73,7 @@ func Listen(path string) (net.Listener, error) {
 	}
 	if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
 		c.Close()
-		return nil, fmt.Errorf("another avocado daemon is already running at %s", path)
+		return nil, fmt.Errorf("another avocadomtp daemon is already running at %s", path)
 	}
 	_ = os.Remove(path) // stale socket from a crashed daemon
 	ln, err := net.Listen("unix", path)
@@ -233,7 +239,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
-		return nil, nil, errors.New("avocado daemon is shutting down")
+		return nil, nil, errors.New("avocadomtp daemon is shutting down")
 	}
 	if s.phone == nil {
 		if time.Since(s.lastTry) < time.Second && s.lastErr != nil {
@@ -246,6 +252,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 		if err != nil {
 			if s.lastErr == nil || err.Error() != s.lastErr.Error() {
 				s.logf("phone not available: %v", firstLine(err))
+				s.Hub.SetPhone(false, nil, firstLine(err))
 			}
 			s.lastErr = err
 			s.mu.Unlock()
@@ -254,6 +261,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 		s.phone, s.lastErr = p, nil
 		d := p.Device()
 		s.logf("connected: %s %s (serial %s)", d.Manufacturer, d.Model, d.Serial)
+		s.Hub.SetPhone(true, &d, "")
 		s.emit(true)
 	}
 	s.mu.Unlock()
@@ -274,6 +282,7 @@ func (s *Server) drop(p Phone) {
 	}
 	s.phone.Close()
 	s.phone = nil
+	s.Hub.SetPhone(false, nil, "")
 	s.emit(false)
 	if !s.closing && s.kick != nil {
 		go func() {
@@ -319,6 +328,9 @@ func (s *Server) handle(ctx context.Context, req *Request, r *bufio.Reader, w *b
 	s.touch()
 	defer s.touch()
 
+	if req.Op == OpWatch {
+		return s.watchStream(ctx, r, w)
+	}
 	var upload *frameReader
 	if req.Op == OpUpload {
 		upload = &frameReader{r: r}
@@ -368,7 +380,26 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 		d := p.Device()
 		st := p.Stats()
 		return &Response{OK: true, Connected: true, Device: &d, Storages: storages,
-			Stats: &Stats{BytesIn: st.BytesIn, BytesOut: st.BytesOut, Ops: st.Ops}}, nil
+			Stats:  &Stats{BytesIn: st.BytesIn, BytesOut: st.BytesOut, Ops: st.Ops},
+			Mounts: s.Hub.Snapshot().Mounts}, nil
+
+	case OpEject:
+		if s.Eject == nil {
+			return fail(&Error{Code: "ENOTSUP", Msg: "this daemon doesn't mount volumes"})
+		}
+		if err := s.Eject(req.Storage); err != nil {
+			return fail(err)
+		}
+		return ok, nil
+
+	case OpMount:
+		if s.Remount == nil {
+			return fail(&Error{Code: "ENOTSUP", Msg: "this daemon doesn't mount volumes"})
+		}
+		if err := s.Remount(); err != nil {
+			return fail(err)
+		}
+		return ok, nil
 
 	case OpList:
 		objs, err := p.List(ctx, req.Storage, req.Handle)
@@ -412,15 +443,21 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 		if err := writeJSON(w, *ok); err != nil {
 			return nil, err
 		}
+		var xfer *activity.Transfer
+		if o, err := p.Object(ctx, req.Handle); err == nil {
+			xfer = s.Hub.Begin(o.Name, activity.FromPhone, int64(o.Size))
+		}
 		fw := frameWriter{w}
 		var werr error
 		err := download(ctx, p, req.Handle, writerFunc(func(b []byte) (int, error) {
 			n, err := fw.Write(b)
+			xfer.Add(n)
 			if err != nil {
 				werr = err
 			}
 			return n, err
 		}))
+		xfer.End(errors.Join(err, werr))
 		if werr != nil {
 			return nil, werr // client went away
 		}
@@ -433,7 +470,9 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 		return ok, nil
 
 	case OpUpload:
-		h, err := uploadChunked(ctx, p, req, upload)
+		xfer := s.Hub.Begin(req.Name, activity.ToPhone, req.Size)
+		h, err := uploadChunked(ctx, p, req, countReader{upload, xfer})
+		xfer.End(err)
 		if derr := upload.drain(); derr != nil {
 			return nil, derr
 		}
@@ -583,6 +622,45 @@ func entryOf(o *mtp.Object) Entry {
 		e.MTime = o.Modified.Unix()
 	}
 	return e
+}
+
+// watchStream answers a "watch" request with a stream of activity snapshots
+// until the client disconnects.
+func (s *Server) watchStream(ctx context.Context, r *bufio.Reader, w *bufio.Writer) error {
+	if err := writeJSON(w, Response{OK: true}); err != nil {
+		return err
+	}
+	snaps, cancel := s.Hub.Subscribe()
+	defer cancel()
+	gone := make(chan struct{})
+	go func() { // the client sends nothing more; EOF means it went away
+		_, _ = r.ReadByte()
+		close(gone)
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-gone:
+			return io.EOF
+		case st := <-snaps:
+			if err := writeJSON(w, st); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// countReader reports bytes read to a transfer.
+type countReader struct {
+	r io.Reader
+	t *activity.Transfer
+}
+
+func (c countReader) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	c.t.Add(n)
+	return n, err
 }
 
 type writerFunc func([]byte) (int, error)
