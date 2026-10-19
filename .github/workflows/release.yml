@@ -24,9 +24,10 @@ jobs:
           go-version-file: go.mod
 
       # libusb: headers and library for the tests (the release links its own
-      # universal build from scripts/build-libusb.sh).
-      - name: Install XcodeGen and libusb
-        run: brew install xcodegen libusb
+      # universal build from scripts/build-libusb.sh). FUSE-T: cgofuse needs its
+      # fuse.h to compile; the library itself is only loaded at run time.
+      - name: Install XcodeGen, libusb and FUSE-T
+        run: brew install xcodegen libusb && brew install --cask fuse-t
 
       - name: Version
         id: version
