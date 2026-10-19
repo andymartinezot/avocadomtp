@@ -30,34 +30,14 @@ struct MenuBarLabel: View {
     }
 }
 
-/// A monochrome avocado drawn in code so it's crisp at any scale and follows
-/// the menu bar's light/dark appearance (template image). The pit is filled
-/// while a phone is connected.
+/// The menu bar avocado (macos/Design/menubar, concept A): a template image,
+/// so macOS tints it for light and dark menu bars. The USB-C pit is empty when
+/// idle and filled while a phone is connected.
 enum AvocadoIcon {
     static func template(active: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 16, height: 18), flipped: false) { _ in
-            let pear = NSBezierPath()
-            pear.move(to: NSPoint(x: 8, y: 1))
-            pear.curve(to: NSPoint(x: 14.5, y: 7), controlPoint1: NSPoint(x: 12, y: 1), controlPoint2: NSPoint(x: 14.5, y: 3.5))
-            pear.curve(to: NSPoint(x: 11, y: 12), controlPoint1: NSPoint(x: 14.5, y: 9.5), controlPoint2: NSPoint(x: 12, y: 10.5))
-            pear.curve(to: NSPoint(x: 8, y: 17), controlPoint1: NSPoint(x: 10, y: 13.5), controlPoint2: NSPoint(x: 10.5, y: 17))
-            pear.curve(to: NSPoint(x: 5, y: 12), controlPoint1: NSPoint(x: 5.5, y: 17), controlPoint2: NSPoint(x: 6, y: 13.5))
-            pear.curve(to: NSPoint(x: 1.5, y: 7), controlPoint1: NSPoint(x: 4, y: 10.5), controlPoint2: NSPoint(x: 1.5, y: 9.5))
-            pear.curve(to: NSPoint(x: 8, y: 1), controlPoint1: NSPoint(x: 1.5, y: 3.5), controlPoint2: NSPoint(x: 4, y: 1))
-            pear.close()
-            pear.lineWidth = 1.5
-            NSColor.black.set()
-            pear.stroke()
-            let pit = NSBezierPath(ovalIn: NSRect(x: 5, y: 3.5, width: 6, height: 6))
-            if active {
-                pit.fill()
-            } else {
-                pit.lineWidth = 1.2
-                pit.stroke()
-            }
-            return true
-        }
+        let image = NSImage(named: active ? "MenuBarConnected" : "MenuBarIdle") ?? NSImage()
         image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
         return image
     }
 }

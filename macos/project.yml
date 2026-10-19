@@ -25,6 +25,7 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES # menu bar only, no Dock icon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSHumanReadableCopyright: "AvocadoMTP"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
         # Not sandboxed: the app talks to the daemon's Unix socket in
         # ~/Library/Application Support/AvocadoMTP and runs the avocadomtp CLI.

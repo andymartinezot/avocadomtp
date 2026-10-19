@@ -365,5 +365,6 @@ docs/index.html       interactive architecture & performance page
 - [x] Service control: start / stop / start-at-login
 - [x] Daemon API for the menu bar: `watch` event stream, mounts, eject / mount
 - [x] Menu bar app (SwiftUI): mounts, paths, live transfers and speed, eject, on/off, start at login
-- [ ] App icon and bundling the daemon inside the app
+- [x] App and menu bar icons (sources and previews in `macos/Design/`)
+- [ ] Bundle the daemon inside the app
 - [ ] Distribution: Homebrew tap, then a signed `.app` in a DMG
