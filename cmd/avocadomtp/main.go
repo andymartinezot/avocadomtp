@@ -14,6 +14,10 @@ import (
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
+// version is set at build time (-ldflags "-X main.version=1.2.3"); plain
+// go build reports "dev", which the menu bar app never replaces on its own.
+var version = "dev"
+
 const usage = `avocadomtp — Android file transfer over USB (MTP)
 
 Usage: avocadomtp [-d SERIAL] [--direct] <command> [args]
@@ -32,11 +36,13 @@ Commands:
   eject STORAGE | --all           unmount one or every Finder volume (until "mount" or reconnect)
   mount                           mount all Finder volumes again
   uninstall                       remove the service and the menu bar app (keeps your phone's files)
+  version                         print the version
 
 Background daemon (owns the USB connection; used by the CLI and Finder):
   daemon [--no-mount]             run in the foreground; mounts each storage as a
                                   Finder volume (needs FUSE-T) unless --no-mount
-  daemon install | uninstall      set up the background service (and start it) / remove it
+  daemon install [--no-start]     set up the background service (and start it) / remove it
+  daemon uninstall
   daemon start | stop             start / stop the background service now
   daemon autostart on|off         start the service at login (default on)
   daemon status                   service state, phone, mounts and traffic
@@ -84,6 +90,9 @@ func runMain(serial string, direct bool, args []string) error {
 		return mountCmd()
 	case "uninstall":
 		return uninstallAll()
+	case "version":
+		fmt.Println(version)
+		return nil
 	}
 	if _, ok := commands[args[0]]; !ok && args[0] != "shell" {
 		return fmt.Errorf("unknown command %q (see avocadomtp --help)", args[0])

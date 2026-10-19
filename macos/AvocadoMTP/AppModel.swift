@@ -11,8 +11,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var autostart = true
     @Published private(set) var busy = false
     @Published var message: String?
+    /// True while the app installs or updates the service from its helper.
+    @Published private(set) var settingUp = false
+    /// A developer build of the service is installed; the app offers its own.
+    @Published private(set) var devServiceInstalled = false
+    @Published private(set) var volumes = ServiceControl.Status.Volumes.unknown
+    @Published private(set) var cliOnPath = true
 
     var installed: Bool { ServiceControl.isInstalled }
+    var canInstallService: Bool { ServiceControl.helper != nil }
 
     var isTransferring: Bool {
         state?.transfers.contains { $0.state == "active" } ?? false
@@ -21,9 +28,49 @@ final class AppModel: ObservableObject {
     init() {
         startWatching()
         Task {
-            autostart = await Task.detached { ServiceControl.autostart() }.value
+            await setUpService()
             registerLoginItemByDefault()
         }
+    }
+
+    /// Runs once at launch: installs the service from the bundled helper if
+    /// it's missing or older, then reads the status the menu needs.
+    private func setUpService() async {
+        let setup = await Task.detached {
+            ServiceControl.setupNeeded(
+                installed: ServiceControl.isInstalled,
+                installedVersion: ServiceControl.isInstalled ? ServiceControl.version(of: ServiceControl.binary) : nil,
+                helperVersion: ServiceControl.helper.flatMap { ServiceControl.version(of: $0) })
+        }.value
+        devServiceInstalled = setup == .devInstalled
+        if setup == .install || setup == .update {
+            await installService(firstTime: setup == .install)
+        }
+        await refreshStatus()
+    }
+
+    /// Installs (or reinstalls) the service from the helper, keeping a stopped
+    /// service stopped.
+    private func installService(firstTime: Bool) async {
+        settingUp = true
+        let failure = await Task.detached { () -> String? in
+            let wasRunning = firstTime || ServiceControl.status().running
+            do {
+                try ServiceControl.installFromHelper(start: wasRunning)
+                return nil
+            } catch {
+                return "Couldn't set up the service: " + error.localizedDescription
+            }
+        }.value
+        settingUp = false
+        message = failure
+    }
+
+    func refreshStatus() async {
+        let st = await Task.detached { ServiceControl.status() }.value
+        autostart = st.autostart
+        volumes = st.volumes
+        cliOnPath = ServiceControl.cliOnPath
     }
 
     /// On first launch, open the menu at login too when the service is set to
@@ -33,7 +80,28 @@ final class AppModel: ObservableObject {
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
         if autostart, SMAppService.mainApp.status != .enabled {
-            try? SMAppService.mainApp.register()
+            do {
+                try Self.registerLoginItem()
+            } catch {
+                message = error.localizedDescription
+            }
+        }
+    }
+
+    /// Adds this menu to the login items. macOS may refuse or want approval
+    /// (more likely for ad-hoc signed builds); the service's own autostart
+    /// works either way.
+    nonisolated private static func registerLoginItem() throws {
+        let app = SMAppService.mainApp
+        do {
+            try app.register()
+        } catch {
+            throw DaemonError.daemon("The service will start at login, but macOS didn't add this menu: " +
+                "add AvocadoMTP in System Settings → General → Login Items.")
+        }
+        if app.status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+            throw DaemonError.daemon("Allow AvocadoMTP in Login Items to open this menu at login.")
         }
     }
 
@@ -84,7 +152,7 @@ final class AppModel: ObservableObject {
             try ServiceControl.run(["daemon", "autostart", on ? "on" : "off"])
             let app = SMAppService.mainApp
             if on, app.status != .enabled {
-                try app.register()
+                try Self.registerLoginItem()
             } else if !on, app.status == .enabled {
                 try app.unregister()
             }
@@ -111,13 +179,44 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: mount.path))
     }
 
+    /// Installs this app's service, or replaces an installed developer build
+    /// with it (a stopped one stays stopped).
+    func useBundledService() {
+        Task {
+            await installService(firstTime: !installed)
+            devServiceInstalled = false
+            await refreshStatus()
+        }
+    }
+
+    func installCLI() {
+        perform({ try ServiceControl.installCLI() }) { [weak self] in
+            self?.cliOnPath = ServiceControl.cliOnPath
+        }
+    }
+
+    /// Called when the menu opens, so the checklist follows changes made
+    /// elsewhere (FUSE-T installed, extension enabled) without any polling.
+    func menuOpened() {
+        guard !settingUp else { return }
+        Task { await refreshStatus() }
+    }
+
+    func openFUSETDownload() {
+        NSWorkspace.shared.open(URL(string: "https://www.fuse-t.org")!)
+    }
+
+    func openExtensionsSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+    }
+
     func openLog() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         NSWorkspace.shared.open(home.appendingPathComponent("Library/Logs/avocadomtp.log"))
     }
 
     /// Runs blocking work off the main thread and reports errors in the menu.
-    private func perform(_ work: @escaping @Sendable () throws -> Void) {
+    private func perform(_ work: @escaping @Sendable () throws -> Void, then done: (() -> Void)? = nil) {
         busy = true
         message = nil
         Task {
@@ -131,6 +230,7 @@ final class AppModel: ObservableObject {
             }.value
             busy = false
             message = failure
+            done?()
         }
     }
 }

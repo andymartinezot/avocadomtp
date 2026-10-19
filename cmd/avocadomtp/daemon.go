@@ -31,11 +31,16 @@ func daemonCmd(serial string, args []string) error {
 		if err != nil {
 			return err
 		}
-		p, err := daemon.Install(exe)
+		start := !(len(args) > 1 && args[1] == "--no-start")
+		p, err := daemon.Install(exe, start)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("installed %s and started the daemon\nlog: %s\n", p, daemon.LogPath())
+		if start {
+			fmt.Printf("installed %s and started the daemon\nlog: %s\n", p, daemon.LogPath())
+		} else {
+			fmt.Printf("installed %s (not started)\nlog: %s\n", p, daemon.LogPath())
+		}
 		return printAgent()
 	case "uninstall":
 		if err := daemon.Uninstall(); err != nil {
@@ -65,9 +70,24 @@ func daemonCmd(serial string, args []string) error {
 		if err := printAgent(); err != nil {
 			return err
 		}
+		fuseT := fusefs.Available()
+		fmt.Println(volumesLine(fuseT, fuseT && fusefs.FSKitEnabled()))
 		return daemonStatus(socket)
 	}
 	return fmt.Errorf("unknown daemon command %q (run, install, uninstall, start, stop, autostart, status)", sub)
+}
+
+// volumesLine reports how Finder volumes will mount; the menu bar app reads it
+// to show its setup checklist.
+func volumesLine(fuseT, fskit bool) string {
+	switch {
+	case !fuseT:
+		return "volumes:   unavailable (FUSE-T not installed)"
+	case fskit:
+		return "volumes:   fskit"
+	default:
+		return "volumes:   nfs (enable fuse-t in File System Extensions for local disks)"
+	}
 }
 
 func printAgent() error {

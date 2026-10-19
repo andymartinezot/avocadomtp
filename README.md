@@ -279,6 +279,8 @@ The daemon runs as a LaunchAgent. You decide whether it runs, and whether it sta
 
 ```sh
 avocadomtp daemon install            # set up the service (copies the binary) and start it
+avocadomtp daemon install --no-start # set it up without starting it now
+avocadomtp version                   # print the version ("dev" for a plain go build)
 avocadomtp daemon stop               # stop now: volumes unmount, launchd won't restart it
 avocadomtp daemon start              # start now
 avocadomtp daemon autostart off      # don't start at login (on by default)
@@ -290,7 +292,7 @@ avocadomtp daemon [--no-mount]       # run in the foreground instead (debugging)
 ### Uninstall everything
 
 ```sh
-avocadomtp uninstall                 # the service + the menu bar app (login item, preferences, bundle)
+avocadomtp uninstall                 # the service + the menu bar app (login item, preferences, bundle, CLI link)
 ```
 
 Your phone's files are never touched. FUSE-T, libusb and Go stay installed (Homebrew removes them).
@@ -312,19 +314,26 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 | Volumes | name and path: click to open in Finder, ⏏ to eject one, "Eject all" before unplugging, "Mount all" to bring them back |
 | Transfers | file, direction, progress bar, speed; done / failed |
 | Start at login | one switch for the service's autostart and the menu's own login item |
+| Setup checklist | only when something is missing: FUSE-T not installed, or the FSKit extension off |
+| Install command-line tool… | links `avocadomtp` into `/usr/local/bin` (asks for your password once) |
 
 It holds a single `watch` connection: snapshots arrive when something changes, so the app uses no CPU
-while idle (≈14 MB of memory). Build and install it with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+while idle (≈14 MB of memory).
+
+The app is self-contained: `avocadomtp` is inside it (`Contents/Helpers`, with libusb linked in), and
+on launch it installs the background service, or updates it when the app is newer. A stopped service
+stays stopped, and a service you built from source is never replaced unless you click "Use this app's
+version". Build it with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen); no Apple account
+is needed:
 
 ```sh
 brew install xcodegen
-cd macos && xcodegen generate
-xcodebuild -project AvocadoMTP.xcodeproj -scheme AvocadoMTP -configuration Release \
-  -derivedDataPath build -allowProvisioningUpdates build
-cp -R build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
+scripts/build-app.sh             # ad-hoc signed; DEVELOPMENT_TEAM=<your team> to sign with yours
+cp -R macos/build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
 ```
 
-Set `DEVELOPMENT_TEAM` in `macos/project.yml` to your own team (a free Apple account is enough for your Mac).
+It also writes `macos/build/AvocadoMTP-<version>.zip`. The version comes from `MARKETING_VERSION` in
+`macos/project.yml` (or `VERSION=1.2.3`).
 
 ## Finder volumes
 
@@ -358,6 +367,8 @@ internal/fusefs/      FUSE file system, mount manager, metadata shadow store
 internal/errcode/     MTP/USB errors → POSIX errno
 internal/bufpool/     pooled transfer buffers
 macos/                menu bar app (SwiftUI, XcodeGen project.yml)
+scripts/build-app.sh  builds the self-contained app (+ zip)
+install.sh            one-command install from source
 docs/index.html       interactive architecture & performance page
 ```
 
