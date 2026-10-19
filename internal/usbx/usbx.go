@@ -37,7 +37,14 @@ var (
 	ErrAccess   = Error(C.LIBUSB_ERROR_ACCESS)
 	ErrBusy     = Error(C.LIBUSB_ERROR_BUSY)
 	ErrPipe     = Error(C.LIBUSB_ERROR_PIPE)
+	ErrOther    = Error(C.LIBUSB_ERROR_OTHER)
 )
+
+// heldByAnotherProcess reports whether a failed claim means someone else has
+// the interface. macOS 26 reports ptpcamerad's hold as OTHER, not ACCESS.
+func heldByAnotherProcess(err error) bool {
+	return errors.Is(err, ErrAccess) || errors.Is(err, ErrBusy) || errors.Is(err, ErrOther)
+}
 
 func check(rc C.int) error {
 	if rc < 0 {
@@ -238,7 +245,7 @@ func (c *Context) Open(cand *Candidate) (*Device, error) {
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, ErrAccess) && !errors.Is(err, ErrBusy) {
+		if !heldByAnotherProcess(err) {
 			break
 		}
 		// ptpcamerad runs as the current user and is respawned on demand by launchd.
@@ -247,7 +254,7 @@ func (c *Context) Open(cand *Candidate) (*Device, error) {
 	}
 	if err != nil {
 		C.libusb_close(h)
-		if errors.Is(err, ErrAccess) || errors.Is(err, ErrBusy) {
+		if heldByAnotherProcess(err) {
 			return nil, fmt.Errorf("claim MTP interface: %w (another app such as the avocadomtp daemon, Android File Transfer, OpenMTP or MacDroid may be using the phone)", err)
 		}
 		return nil, fmt.Errorf("claim MTP interface: %w", err)
