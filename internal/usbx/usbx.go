@@ -218,7 +218,15 @@ func stringDesc(h *C.libusb_device_handle, idx uint8) string {
 	if n < 0 {
 		return ""
 	}
-	return strings.TrimSpace(string(buf[:n]))
+	// libusb maps non-ASCII to '?' but passes ASCII control bytes (ESC…):
+	// the device chooses these strings, and they end up in errors and logs.
+	b := buf[:n]
+	for i, c := range b {
+		if c < 0x20 || c == 0x7f {
+			b[i] = '?'
+		}
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // Device is an opened MTP interface.

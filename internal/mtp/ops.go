@@ -3,6 +3,7 @@ package mtp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -170,7 +171,9 @@ func (s *Session) listPropList(ctx context.Context, storage, parent uint32) ([]*
 	}
 	out := order[:0]
 	for _, o := range order {
-		if o.Handle != parent && o.Parent == parent && o.Name != "" {
+		// Nameless objects are kept: vfs hides them but counts them, so their
+		// folder never looks empty (and is never deleted as if it were).
+		if o.Handle != parent && o.Parent == parent {
 			out = append(out, o)
 		}
 	}
@@ -197,15 +200,23 @@ func (s *Session) ReadAt(ctx context.Context, h uint32, p []byte, off int64) (in
 	return w.n, err
 }
 
-// fillWriter writes into a fixed buffer, dropping anything past its end.
+// errOverlong is returned when a device sends more than a partial read asked for.
+var errOverlong = errors.New("mtp: device sent more data than requested")
+
+// fillWriter writes into a fixed buffer and fails if the device sends more,
+// instead of reading (possibly gigabytes) only to drop it.
 type fillWriter struct {
 	p []byte
 	n int
 }
 
 func (w *fillWriter) Write(b []byte) (int, error) {
-	w.n += copy(w.p[w.n:], b)
-	return len(b), nil
+	n := copy(w.p[w.n:], b)
+	w.n += n
+	if n < len(b) {
+		return n, errOverlong
+	}
+	return n, nil
 }
 
 // Upload creates a file named name in parent and streams size bytes from r.

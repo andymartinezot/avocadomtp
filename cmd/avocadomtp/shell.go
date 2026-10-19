@@ -71,7 +71,7 @@ func (c *client) shell() error {
 			if errors.Is(err, context.Canceled) {
 				err = errors.New("cancelled")
 			}
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, "error:", printable(err.Error()))
 		}
 		if herr := c.healthy(); herr != nil {
 			return fmt.Errorf("lost connection to the phone: %w", herr)

@@ -475,6 +475,9 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 		return ok, nil
 
 	case OpUpload:
+		if req.Size < 0 {
+			return nil, fmt.Errorf("upload: negative size %d", req.Size)
+		}
 		xfer := s.Hub.Begin(req.Name, activity.ToPhone, req.Size)
 		h, err := uploadChunked(ctx, p, req, countReader{upload, xfer})
 		xfer.End(err)

@@ -245,14 +245,14 @@ func (c *client) pushPath(ctx context.Context, local string, dir *vfs.Entry, rec
 		return nil
 	}
 
+	// MTP cannot overwrite: upload under a temporary name, then swap, so a
+	// failed upload never destroys the existing file (as fusefs does).
+	uploadName := name
 	if existing != nil {
 		if existing.IsDir {
 			return fmt.Errorf("%s exists and is a folder", remotePath)
 		}
-		// MTP cannot overwrite in place: replace the old file.
-		if err := c.r.Delete(ctx, existing.Handle); err != nil {
-			return fmt.Errorf("replace %s: %w", remotePath, err)
-		}
+		uploadName = ".avocadomtp-" + name
 	}
 	f, err := os.Open(local)
 	if err != nil {
@@ -260,10 +260,19 @@ func (c *client) pushPath(ctx context.Context, local string, dir *vfs.Entry, rec
 	}
 	defer f.Close()
 	pr := newProgress(remotePath, fi.Size())
-	_, err = c.r.Upload(ctx, dir.StorageID, dir.Handle, name, fi.Size(), fi.ModTime(), pr.reader(f))
+	h, err := c.r.Upload(ctx, dir.StorageID, dir.Handle, uploadName, fi.Size(), fi.ModTime(), pr.reader(f))
 	c.fs.Invalidate(dir.StorageID, dir.Handle)
 	if err != nil {
 		return fmt.Errorf("push %s: %w", remotePath, err)
+	}
+	if existing != nil {
+		if err := c.r.Delete(ctx, existing.Handle); err != nil {
+			return fmt.Errorf("replace %s: %w", remotePath, err)
+		}
+		if err := c.r.Rename(ctx, h, name); err != nil {
+			return fmt.Errorf("replace %s: %w", remotePath, err)
+		}
+		c.fs.Invalidate(dir.StorageID, dir.Handle)
 	}
 	pr.finish("pushed")
 	return nil

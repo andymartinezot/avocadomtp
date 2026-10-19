@@ -229,3 +229,34 @@ func TestEmptyCountsHiddenChildren(t *testing.T) {
 		t.Fatalf("Empty = %v, %v; want false (a hidden child)", empty, err)
 	}
 }
+
+// Two storages described the same way: the description resolves to the
+// first one, never to "SD card (2)".
+func TestAliasResolvesToFirstMatch(t *testing.T) {
+	b := &hostileBackend{storages: map[uint32]*ptp.StorageInfo{
+		1: {Description: "SD card"}, 2: {Description: "SD card"},
+	}}
+	f := New(b)
+	ctx := context.Background()
+	for _, p := range []string{"/SD card", "/sd card"} {
+		e, err := f.Stat(ctx, p)
+		if err != nil || e.StorageID != 1 {
+			t.Errorf("Stat(%q) = storage %v, %v; want 1", p, e, err)
+		}
+	}
+	if e, err := f.Stat(ctx, "/SD card (2)"); err != nil || e.StorageID != 2 {
+		t.Errorf("Stat(SD card (2)) = %v, %v", e, err)
+	}
+}
+
+func TestNamelessChildrenKeepFoldersNonEmpty(t *testing.T) {
+	b := &hostileBackend{
+		storages: map[uint32]*ptp.StorageInfo{1: {Description: "SD card"}},
+		objs:     []*mtp.Object{{Handle: 1, StorageID: 1, Name: ""}},
+	}
+	f := New(b)
+	root, _ := f.Stat(context.Background(), "/SD card")
+	if empty, err := f.Empty(context.Background(), root); err != nil || empty {
+		t.Fatalf("Empty = %v, %v; want false", empty, err)
+	}
+}
