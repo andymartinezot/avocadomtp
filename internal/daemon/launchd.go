@@ -163,15 +163,42 @@ func autostartEnabled() bool {
 	return true // no override: enabled
 }
 
-// Uninstall stops the daemon and removes the agent and its binary.
+// Uninstall stops the daemon and removes everything the service installed:
+// the agent, its binary, the socket, the write-staging cache and the log.
 func Uninstall() error {
 	_ = Stop()
-	_ = launchctl("enable", service()) // drop our override
+	_ = launchctl("enable", service()) // drop our autostart override
 	if err := os.Remove(agentPath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	appSupport := filepath.Dir(filepath.Dir(InstalledBinary()))
 	_ = os.Remove(InstalledBinary())
+	_ = os.Remove(filepath.Dir(InstalledBinary()))
+	_ = os.Remove(filepath.Join(appSupport, "avocadomtp.sock"))
+	_ = os.Remove(appSupport) // only if empty: never delete files we don't know
+	_ = os.RemoveAll(CacheDir())
+	_ = os.Remove(LogPath())
 	return nil
+}
+
+// CacheDir holds the Finder volumes' write-staging files.
+func CacheDir() string { return filepath.Join(home(), "Library", "Caches", "AvocadoMTP") }
+
+// AppPath is where the menu bar app is installed.
+const AppPath = "/Applications/AvocadoMTP.app"
+
+// UninstallApp removes the menu bar app: it unregisters its own login item and
+// clears its preferences (only the app can do that), then the bundle is deleted.
+func UninstallApp() (bool, error) {
+	if _, err := os.Stat(AppPath); err != nil {
+		return false, nil
+	}
+	_ = exec.Command(filepath.Join(AppPath, "Contents", "MacOS", "AvocadoMTP"), "--uninstall").Run()
+	_ = exec.Command("pkill", "-x", "AvocadoMTP").Run()
+	if err := os.RemoveAll(AppPath); err != nil {
+		return true, fmt.Errorf("remove %s: %w", AppPath, err)
+	}
+	return true, nil
 }
 
 // removeLegacy cleans up an agent installed under the old "avocado" name.

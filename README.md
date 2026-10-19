@@ -251,6 +251,7 @@ avocadomtp shell                                     # interactive: cd, ls, pull
 
 avocadomtp watch                                  # live: phone, volumes, transfers, speed
 avocadomtp eject Retroid6                         # unmount one volume (until mount/reconnect)
+avocadomtp eject --all                            # unmount every volume (safe to unplug)
 avocadomtp mount                                  # mount all volumes again
 ```
 
@@ -270,9 +271,17 @@ avocadomtp daemon stop               # stop now: volumes unmount, launchd won't 
 avocadomtp daemon start              # start now
 avocadomtp daemon autostart off      # don't start at login (on by default)
 avocadomtp daemon status             # running?, autostart?, phone, volumes, traffic
-avocadomtp daemon uninstall          # stop and remove the service
+avocadomtp daemon uninstall          # stop and remove the service (agent, binary, socket, cache, log)
 avocadomtp daemon [--no-mount]       # run in the foreground instead (debugging)
 ```
+
+### Uninstall everything
+
+```sh
+avocadomtp uninstall                 # the service + the menu bar app (login item, preferences, bundle)
+```
+
+Your phone's files are never touched. FUSE-T, libusb and Go stay installed (Homebrew removes them).
 
 launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 `autostart off` uses launchd's persistent enable/disable switch, so it survives reboots.
@@ -288,7 +297,7 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 | 🥑 icon | outline when idle, filled pit when a phone is connected, total speed while copying |
 | On/off switch | starts or stops the service (`avocadomtp daemon start/stop`) |
 | Phone | model and maker, or how to connect it |
-| Volumes | name and path: click to open in Finder, ⏏ to eject, "Mount all" to bring them back |
+| Volumes | name and path: click to open in Finder, ⏏ to eject one, "Eject all" before unplugging, "Mount all" to bring them back |
 | Transfers | file, direction, progress bar, speed; done / failed |
 | Start at login | one switch for the service's autostart and the menu's own login item |
 

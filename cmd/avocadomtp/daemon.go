@@ -41,7 +41,7 @@ func daemonCmd(serial string, args []string) error {
 		if err := daemon.Uninstall(); err != nil {
 			return err
 		}
-		fmt.Println("daemon stopped and removed")
+		fmt.Println("service stopped and removed (agent, binary, socket, cache, log)")
 		return nil
 	case "start":
 		if err := daemon.Start(); err != nil {

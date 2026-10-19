@@ -82,8 +82,9 @@ func renderState(st activity.State) string {
 // ejectCmd unmounts the named storage.
 func ejectCmd(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: avocadomtp eject STORAGE (e.g. Retroid6)")
+		return errors.New("usage: avocadomtp eject STORAGE|--all (e.g. Retroid6)")
 	}
+	all := args[0] == "--all"
 	c, err := daemon.Dial(daemon.DefaultSocketPath())
 	if err != nil {
 		return needDaemon(err)
@@ -93,6 +94,18 @@ func ejectCmd(args []string) error {
 	st, err := c.Status(ctx)
 	if err != nil {
 		return err
+	}
+	if all {
+		for _, m := range st.Mounts {
+			if err := c.Eject(ctx, m.StorageID); err != nil {
+				return err
+			}
+			fmt.Printf("ejected %s\n", m.Path)
+		}
+		if len(st.Mounts) == 0 {
+			fmt.Println("nothing mounted")
+		}
+		return nil
 	}
 	for _, m := range st.Mounts {
 		if strings.EqualFold(m.Name, strings.Trim(args[0], "/")) {
@@ -124,5 +137,26 @@ func mountCmd() error {
 	for _, m := range st.Mounts {
 		fmt.Printf("mounted %s\n", m.Path)
 	}
+	return nil
+}
+
+// uninstallAll removes everything AvocadoMTP installed on this Mac: the
+// service (agent, binary, socket, cache, log) and the menu bar app (login
+// item, preferences, bundle). Prerequisites (FUSE-T, libusb) are left alone.
+func uninstallAll() error {
+	if err := daemon.Uninstall(); err != nil {
+		return err
+	}
+	fmt.Println("service: removed (agent, binary, socket, cache, log)")
+	removed, err := daemon.UninstallApp()
+	switch {
+	case err != nil:
+		return err
+	case removed:
+		fmt.Println("menu bar app: removed (login item, preferences, " + daemon.AppPath + ")")
+	default:
+		fmt.Println("menu bar app: not installed")
+	}
+	fmt.Println("FUSE-T and libusb were left installed; remove them with Homebrew if you no longer need them.")
 	return nil
 }
