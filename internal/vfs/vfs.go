@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
@@ -106,7 +107,7 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 		if dev := storageName(f.DeviceName); dev != "" && isGenericInternal(name) {
 			name = dev
 		}
-		key := func(s string) string { return strings.ToLower(norm.NFC.String(s)) }
+		key := func(s string) string { return cases.Fold().String(norm.NFC.String(s)) }
 		for base, n := name, 2; seen[key(name)]; n++ {
 			name = fmt.Sprintf("%s (%d)", base, n)
 		}
@@ -227,15 +228,17 @@ func (f *FS) Stat(ctx context.Context, p string) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	// First exact name, then name ignoring case, then the phone's own
+	// description: always the first match, so two storages with the same
+	// description resolve predictably.
 	var st *Storage
-	for _, s := range storages {
-		if s.Name == parts[0] {
-			st = s
-		}
-	}
-	if st == nil {
+	for _, match := range []func(*Storage) bool{
+		func(s *Storage) bool { return s.Name == parts[0] },
+		func(s *Storage) bool { return strings.EqualFold(s.Name, parts[0]) },
+		func(s *Storage) bool { return strings.EqualFold(s.Alias, parts[0]) },
+	} {
 		for _, s := range storages {
-			if strings.EqualFold(s.Name, parts[0]) || strings.EqualFold(s.Alias, parts[0]) {
+			if st == nil && match(s) {
 				st = s
 			}
 		}

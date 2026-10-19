@@ -25,10 +25,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # to check that a release tag is on main
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false # release builds never reuse state from other runs
 
       # libusb: headers and library for the tests (the release links its own
       # universal build from scripts/build-libusb.sh). FUSE-T: cgofuse needs its
@@ -44,9 +46,15 @@ jobs:
             echo "::error::MARKETING_VERSION '$version' isn't X.Y.Z"
             exit 1
           fi
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match MARKETING_VERSION $version"
-            exit 1
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME doesn't match MARKETING_VERSION $version"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::tag $GITHUB_REF_NAME points to a commit that isn't on main"
+              exit 1
+            fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

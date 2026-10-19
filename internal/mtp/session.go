@@ -228,6 +228,7 @@ func (s *Session) recvData(ctx context.Context, tx uint32, h ptp.Header, first [
 
 	chunk := first[ptp.HeaderSize:]
 	lastShort := len(first) < len(s.buf)
+	zlps := 0 // consecutive empty packets in the middle of the phase
 	for {
 		if !unknown && int64(len(chunk)) > remaining {
 			s.pending = append([]byte(nil), chunk[remaining:]...)
@@ -261,12 +262,22 @@ func (s *Session) recvData(ctx context.Context, tx uint32, h ptp.Header, first [
 			return fmt.Errorf("read data: %w", err)
 		}
 		if n == 0 && !unknown {
-			continue // stray ZLP
+			// A stray ZLP carries no data; a device that only sends them would
+			// otherwise keep the session busy forever.
+			if zlps++; zlps > maxStrayZLPs {
+				return errors.New("mtp: device sent only empty packets in a data phase")
+			}
+			chunk = nil
+			continue
 		}
+		zlps = 0
 		chunk = s.buf[:n]
 		lastShort = n < len(s.buf)
 	}
 }
+
+// maxStrayZLPs is how many empty packets in a row recvData tolerates.
+const maxStrayZLPs = 8
 
 // drain discards incoming bulk data after an aborted transfer.
 func (s *Session) drain() {
@@ -279,6 +290,9 @@ func (s *Session) drain() {
 }
 
 func (s *Session) sendData(ctx context.Context, tx uint32, op uint16, r io.Reader, size int64) error {
+	if size < 0 {
+		return fmt.Errorf("mtp: negative data size %d", size)
+	}
 	total := size + ptp.HeaderSize
 	length := uint32(0xFFFFFFFF)
 	if total < 0xFFFFFFFF {

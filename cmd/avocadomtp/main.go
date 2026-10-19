@@ -71,7 +71,7 @@ func main() {
 		return
 	}
 	if err := runMain(serial, direct, args); err != nil {
-		fmt.Fprintln(os.Stderr, "avocadomtp:", err)
+		fmt.Fprintln(os.Stderr, "avocadomtp:", printable(err.Error()))
 		os.Exit(1)
 	}
 }

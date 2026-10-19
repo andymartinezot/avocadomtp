@@ -163,6 +163,20 @@ func (m *Manager) mountAt(r remote.Remote, st *vfs.Storage, root string, options
 	if !vfs.ValidName(st.Name) || filepath.Dir(dir) != filepath.Clean(root) {
 		return nil, fmt.Errorf("refusing to mount storage %q outside %s", st.Name, root)
 	}
+	// Never stack two volumes (m.mu is held by the callers). One of ours
+	// mounted there is refused; a leftover mount (e.g. after a crash) is
+	// cleared, and refused if it won't go.
+	for _, mt := range m.mounts {
+		if mt.dir == dir {
+			return nil, fmt.Errorf("%s is already mounted", dir)
+		}
+	}
+	if isMountPoint(dir) {
+		_ = exec.Command("umount", dir).Run()
+		if isMountPoint(dir) {
+			return nil, fmt.Errorf("%s is already a mount point", dir)
+		}
+	}
 	local := !strings.HasPrefix(dir, "/Volumes/")
 	if local {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
