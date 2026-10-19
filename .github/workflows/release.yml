@@ -1,0 +1,73 @@
+# Builds and tests the universal AvocadoMTP.app. On a v* tag (pushed by
+# scripts/release.sh) it publishes a GitHub Release with AvocadoMTP.zip and its
+# sha256; pushes to main and manual runs only keep the files as an artifact.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # libusb: headers and library for the tests (the release links its own
+      # universal build from scripts/build-libusb.sh).
+      - name: Install XcodeGen and libusb
+        run: brew install xcodegen libusb
+
+      - name: Version
+        id: version
+        run: |
+          version="$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' macos/project.yml)"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match MARKETING_VERSION $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build universal app
+        run: UNIVERSAL=1 VERSION="${{ steps.version.outputs.version }}" scripts/build-app.sh
+
+      - name: Verify
+        run: |
+          app=macos/build/Build/Products/Release/AvocadoMTP.app
+          helper="$app/Contents/Helpers/avocadomtp"
+          for bin in "$app/Contents/MacOS/AvocadoMTP" "$helper"; do
+            archs="$(lipo -archs "$bin")"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::$bin is $archs"; exit 1; }
+          done
+          [[ "$("$helper" version)" == "${{ steps.version.outputs.version }}" ]]
+          codesign --verify --deep --strict "$app"
+          cd macos/build && shasum -a 256 -c AvocadoMTP.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AvocadoMTP-${{ steps.version.outputs.version }}
+          path: |
+            macos/build/AvocadoMTP.zip
+            macos/build/AvocadoMTP.zip.sha256
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            macos/build/AvocadoMTP.zip macos/build/AvocadoMTP.zip.sha256 \
+            --title "AvocadoMTP ${{ steps.version.outputs.version }}" --generate-notes
