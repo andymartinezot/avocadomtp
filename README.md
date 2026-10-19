@@ -25,6 +25,7 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 - [CLI reference](#cli-reference)
 - [Finder volumes](#finder-volumes)
 - [Project layout](#project-layout)
+- [Releasing](#releasing)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 
@@ -32,37 +33,53 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 
 ## Quick start
 
-Needs macOS and [Homebrew](https://brew.sh). Options A and B install the service, the Finder volumes
-and the CLI. The menu bar app needs option C for now: a downloadable build that doesn't need Xcode is
-on the [roadmap](#roadmap).
-
-**Option A: one command.** Installs the dependencies, builds, and starts the service. It clones the
-repository into `~/avocadomtp` (or runs from your clone with `./install.sh`). Run it again to update.
+**One command** (macOS 14 or later, Apple Silicon or Intel):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/install.sh | bash
 ```
 
-**Option B: step by step.** The same four steps, from a clone:
+It downloads the latest [release](https://github.com/andymartinezot/avocadomtp/releases): the menu
+bar app with the service inside. Then it:
+
+- checks the download's sha256;
+- installs [FUSE-T](https://www.fuse-t.org), with Homebrew if you have it (otherwise it gives you the
+  link);
+- puts `AvocadoMTP.app` in `/Applications` and starts the service.
+
+No Xcode, Go or libusb needed. Run it again to update. You can also download `AvocadoMTP.zip` from the
+releases page yourself: the app isn't notarized, so macOS asks once for **System Settings → Privacy &
+Security → Open Anyway**.
+
+> **What you're trusting:** releases are built by GitHub Actions from this repository and are ad-hoc
+> signed (no paid Apple certificate). The installer downloads over HTTPS only and checks the sha256
+> published with the release, which catches corrupted downloads; the trust root is GitHub and this
+> repository. Prefer to check first? Read [`install.sh`](install.sh), or build from source below.
+
+<details>
+<summary><b>Other ways: from source, or building the app yourself</b></summary>
+
+**From source** (Homebrew; the service, Finder volumes and CLI, without the menu bar app):
 
 ```sh
 git clone https://github.com/andymartinezot/avocadomtp.git && cd avocadomtp
+./install.sh --from-source        # or the same four steps by hand:
 brew install go libusb            # build dependencies
 brew install --cask fuse-t        # Finder volumes (free, no kernel extension)
 go build -o bin/avocadomtp ./cmd/avocadomtp
 ./bin/avocadomtp daemon install      # start at login; mounts the phone in Finder
 ```
 
-**Option C: with the menu bar app.** Needs Xcode (a free Apple account is enough, or none at all:
-the build is ad-hoc signed). The app carries the service inside and sets it up on first launch, so
-there's no `daemon install` step:
+**Build the app yourself** (Xcode; no Apple account needed, the build is ad-hoc signed). The app
+sets up the service on first launch:
 
 ```sh
-git clone https://github.com/andymartinezot/avocadomtp.git && cd avocadomtp
 brew install go libusb xcodegen && brew install --cask fuse-t
-scripts/build-app.sh
+scripts/build-app.sh              # UNIVERSAL=1 for Apple Silicon + Intel
 cp -R macos/build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
 ```
+
+</details>
 
 Then:
 
@@ -390,6 +407,21 @@ docs/index.html       interactive architecture & performance page
 
 ---
 
+## Releasing
+
+For maintainers. Releases are built by GitHub Actions (`.github/workflows/release.yml`), never on a
+laptop:
+
+1. Set `MARKETING_VERSION` in `macos/project.yml` to the new version, commit and push.
+2. `scripts/release.sh 1.2.3`. It checks the branch, a clean tree, sync with `origin`, the version
+   and the tests, asks for confirmation, and pushes the tag `v1.2.3` (`--dry-run` checks only).
+3. The workflow builds the universal app with libusb from source (`scripts/build-libusb.sh`), checks
+   it, and publishes the release with `AvocadoMTP.zip` and `AvocadoMTP.zip.sha256`. With `gh`
+   installed, `release.sh` waits for it and prints the link.
+
+Every push to `main` runs the same build and tests without publishing. Users update by running the
+install command again; the new app then updates the service on its first launch.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -414,6 +446,7 @@ docs/index.html       interactive architecture & performance page
 - [x] App and menu bar icons (sources and previews in `macos/Design/`)
 - [x] One-command install script (`install.sh`)
 - [x] Self-contained app: the service inside, set up and updated on launch, no Apple account needed to build
-- [ ] Release builds on GitHub: download the app without Xcode
-- [ ] `install.sh` installs the downloaded app (no Go, Xcode or libusb needed)
+- [x] Release builds on GitHub Actions: universal app (Apple Silicon + Intel)
+- [x] `install.sh` installs the downloaded app (no Go, Xcode or libusb needed)
 - [ ] Homebrew cask
+- [ ] Developer ID signing and notarization (no "Open Anyway" for browser downloads)
