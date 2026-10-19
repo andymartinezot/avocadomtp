@@ -70,8 +70,12 @@ install_release() {
   trap 'rm -rf "$tmp"' EXIT
 
   step "1/4 Downloading AvocadoMTP"
-  if ! curl -fsSL -o "$tmp/AvocadoMTP.zip" "$RELEASE_URL/AvocadoMTP.zip" ||
-    ! curl -fsSL -o "$tmp/AvocadoMTP.zip.sha256" "$RELEASE_URL/AvocadoMTP.zip.sha256"; then
+  # HTTPS only (redirects included); file:// only when the override asks for it.
+  local proto="=https"
+  [[ "$RELEASE_URL" == file://* ]] && proto="=file"
+  local get=(curl -fsSL --proto "$proto" --proto-redir "$proto" --tlsv1.2)
+  if ! "${get[@]}" -o "$tmp/AvocadoMTP.zip" "$RELEASE_URL/AvocadoMTP.zip" 2>/dev/null ||
+    ! "${get[@]}" -o "$tmp/AvocadoMTP.zip.sha256" "$RELEASE_URL/AvocadoMTP.zip.sha256" 2>/dev/null; then
     # No published release yet: build from source as before.
     if [[ -z "${AVOCADOMTP_RELEASE_URL:-}" ]] && command -v brew >/dev/null 2>&1; then
       echo "No release to download yet; building from source instead (no menu bar app)."
@@ -80,7 +84,12 @@ install_release() {
     fi
     fail "couldn't download $RELEASE_URL/AvocadoMTP.zip; nothing was changed (./install.sh --from-source builds it instead)"
   fi
-  (cd "$tmp" && shasum -a 256 -c AvocadoMTP.zip.sha256 >/dev/null) ||
+  # Compare the zip's own hash with the published one (shasum -c would check
+  # whatever file name the .sha256 lists).
+  local want got
+  want="$(awk 'NR == 1 { print $1 }' "$tmp/AvocadoMTP.zip.sha256")"
+  got="$(shasum -a 256 "$tmp/AvocadoMTP.zip" | awk '{ print $1 }')"
+  [[ "$want" =~ ^[0-9a-f]{64}$ && "$got" == "$want" ]] ||
     fail "the download doesn't match its checksum; nothing was changed"
   ditto -x -k "$tmp/AvocadoMTP.zip" "$tmp/app"
   local new="$tmp/app/AvocadoMTP.app"
