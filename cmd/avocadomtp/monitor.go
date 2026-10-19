@@ -74,7 +74,7 @@ func renderState(st activity.State) string {
 				state += ": " + printable(t.Error)
 			}
 		}
-		fmt.Fprintf(&b, "  %s %s%-40s %9s  %s\n", arrow, pct, truncate(t.Path, 40), human(t.Bytes), state)
+		fmt.Fprintf(&b, "  %s %s%-40s %9s  %s\n", arrow, pct, truncate(printable(t.Path), 40), human(t.Bytes), state)
 	}
 	return b.String()
 }

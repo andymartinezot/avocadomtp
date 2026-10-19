@@ -32,12 +32,18 @@ func DecodeHeader(b []byte) (Header, error) {
 	if len(b) < HeaderSize {
 		return Header{}, fmt.Errorf("ptp: short container (%d bytes)", len(b))
 	}
-	return Header{
+	h := Header{
 		Length: binary.LittleEndian.Uint32(b[0:]),
 		Type:   binary.LittleEndian.Uint16(b[4:]),
 		Code:   binary.LittleEndian.Uint16(b[6:]),
 		TxID:   binary.LittleEndian.Uint32(b[8:]),
-	}, nil
+	}
+	// A length shorter than the header itself (0xFFFFFFFF means "unknown")
+	// would make the payload size negative.
+	if h.Length < HeaderSize {
+		return Header{}, fmt.Errorf("ptp: container length %d is shorter than its header", h.Length)
+	}
+	return h, nil
 }
 
 // EncodeOperation builds a command (or response) container with up to 5 u32 params.

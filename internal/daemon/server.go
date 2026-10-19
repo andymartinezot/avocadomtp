@@ -445,7 +445,12 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 		}
 		var xfer *activity.Transfer
 		if o, err := p.Object(ctx, req.Handle); err == nil {
-			xfer = s.Hub.Begin(o.Name, activity.FromPhone, int64(o.Size))
+			// Fetched again from the device, so not covered by the listing's checks.
+			name := o.Name
+			if !vfs.ValidName(name) {
+				name = vfs.Printable(name)
+			}
+			xfer = s.Hub.Begin(name, activity.FromPhone, int64(o.Size))
 		}
 		fw := frameWriter{w}
 		var werr error

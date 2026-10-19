@@ -294,11 +294,11 @@ func (f *FS) Rmdir(p string) int {
 	if !e.IsDir {
 		return -fuse.ENOTDIR
 	}
-	children, err := f.vfs.ReadDirEntry(c, e)
+	empty, err := f.vfs.Empty(c, e)
 	if err != nil {
 		return errno(err)
 	}
-	if len(children) > 0 {
+	if !empty {
 		return -fuse.ENOTEMPTY
 	}
 	f.shadow.removeTree(p) // Finder's ._ files inside the folder
@@ -367,7 +367,7 @@ func (f *FS) Rename(oldpath, newpath string) int {
 			if !src.IsDir {
 				return -fuse.EISDIR
 			}
-			if kids, err := f.vfs.ReadDirEntry(c, dst); err != nil || len(kids) > 0 {
+			if empty, err := f.vfs.Empty(c, dst); err != nil || !empty {
 				return -fuse.ENOTEMPTY
 			}
 		} else if src.IsDir {

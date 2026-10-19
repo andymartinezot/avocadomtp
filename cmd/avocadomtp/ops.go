@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"unicode"
 
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
@@ -71,17 +70,8 @@ func (c *client) ls(ctx context.Context, w io.Writer, p string, long bool) error
 	return tw.Flush()
 }
 
-// printable replaces control characters in text that came from the device,
-// so a hostile phone can't send terminal escape sequences. (File and storage
-// names are already checked by vfs.ValidName.)
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return '?'
-		}
-		return r
-	}, s)
-}
+// printable makes device text safe for the terminal (see vfs.Printable).
+func printable(s string) string { return vfs.Printable(s) }
 
 // childPath joins a device-supplied name onto a local folder, refusing
 // anything that would land outside it (vfs already hides such names; this
@@ -89,7 +79,11 @@ func printable(s string) string {
 func childPath(dir, name string) (string, error) {
 	p := filepath.Join(dir, name)
 	if !vfs.ValidName(name) || filepath.Dir(p) != filepath.Clean(dir) {
-		return "", fmt.Errorf("refusing to write %q outside %s", name, dir)
+		return "", fmt.Errorf("refusing to write %q outside %s", printable(name), dir)
+	}
+	// Don't follow a symlink someone left where the copy goes.
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refusing to write through the symlink %s", p)
 	}
 	return p, nil
 }
@@ -146,11 +140,13 @@ func (c *client) pullEntry(ctx context.Context, e *vfs.Entry, local string, recu
 		return nil
 	}
 
-	tmp := local + ".avocadomtp-part"
-	f, err := os.Create(tmp)
+	// A new, exclusively created temp file: never an existing file or symlink.
+	f, err := os.CreateTemp(filepath.Dir(local), "."+filepath.Base(local)+".*.avocadomtp-part")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
+	_ = f.Chmod(0o644)
 	pr := newProgress(e.Path, int64(e.Size))
 	err = c.r.Download(ctx, e.Handle, pr.writer(f))
 	if cerr := f.Close(); err == nil {

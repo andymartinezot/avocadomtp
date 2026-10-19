@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/andymartinezot/avocadomtp/internal/activity"
@@ -15,6 +17,7 @@ import (
 	"github.com/andymartinezot/avocadomtp/internal/device"
 	"github.com/andymartinezot/avocadomtp/internal/fusefs"
 	"github.com/andymartinezot/avocadomtp/internal/usbx"
+	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
 func daemonCmd(serial string, args []string) error {
@@ -77,6 +80,19 @@ func daemonCmd(serial string, args []string) error {
 	return fmt.Errorf("unknown daemon command %q (run, install, uninstall, start, stop, autostart, status)", sub)
 }
 
+// logWriter keeps each log entry on one line of printable text: messages can
+// carry device text (names, USB strings, errors), which must not forge log
+// lines or send escape sequences to whoever tails the log.
+type logWriter struct{ w io.Writer }
+
+func (l logWriter) Write(p []byte) (int, error) {
+	line := strings.TrimSuffix(string(p), "\n")
+	if _, err := io.WriteString(l.w, vfs.Printable(line)+"\n"); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 // volumesLine reports how Finder volumes will mount; the menu bar app reads it
 // to show its setup checklist.
 func volumesLine(fuseT, fskit bool) string {
@@ -113,7 +129,7 @@ func runDaemon(serial, socket string, mount bool) error {
 	if err != nil {
 		return err
 	}
-	logger := log.New(os.Stderr, "avocadomtp: ", log.LstdFlags)
+	logger := log.New(logWriter{os.Stderr}, "avocadomtp: ", log.LstdFlags)
 	logger.Printf("listening on %s", socket)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

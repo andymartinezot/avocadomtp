@@ -175,8 +175,10 @@ final class AppModel: ObservableObject {
         perform { try DaemonConnection().call(["op": "mount"]) }
     }
 
+    /// Shows the volume in Finder. Never `open` it: a storage named like a
+    /// bundle ("X.app") would be launched instead of shown.
     func reveal(_ mount: ActivityState.Mount) {
-        NSWorkspace.shared.open(URL(fileURLWithPath: mount.path))
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: mount.path)
     }
 
     /// Installs this app's service, or replaces an installed developer build

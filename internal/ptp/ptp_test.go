@@ -131,3 +131,14 @@ func TestObjectPropListHostileCount(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeHeaderRejectsShortLength(t *testing.T) {
+	b := []byte{4, 0, 0, 0, 2, 0, 0x09, 0x10, 1, 0, 0, 0} // data container claiming 4 bytes
+	if _, err := DecodeHeader(b); err == nil {
+		t.Fatal("expected an error for a length below the header size")
+	}
+	b[0], b[1], b[2], b[3] = 0xff, 0xff, 0xff, 0xff // "unknown length" stays valid
+	if _, err := DecodeHeader(b); err != nil {
+		t.Fatalf("unknown length: %v", err)
+	}
+}
