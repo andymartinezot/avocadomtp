@@ -62,4 +62,5 @@ macos/Design/
 Drop new files here with the same names (or new ones, and say which to use), then they're
 integrated into `macos/AvocadoMTP/Assets.xcassets` (menu bar) and the app icon.
 
-To regenerate the PNG renders after editing an SVG, open the SVG in a browser and export it.
+To regenerate the PNG renders after editing an SVG, open the SVG in a browser and export it
+(or render it with a headless browser).

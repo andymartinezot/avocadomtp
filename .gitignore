@@ -1,7 +1,3 @@
 bin/
 *.avocadomtp-part
 .DS_Store
-
-memory/
-docs/sessions/*
-!docs/sessions/README.md
