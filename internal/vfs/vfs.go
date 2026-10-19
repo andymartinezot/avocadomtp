@@ -66,8 +66,9 @@ type FS struct {
 }
 
 type dirEntry struct {
-	objs []*mtp.Object
-	at   time.Time
+	objs   []*mtp.Object
+	hidden int // objects left out because of their names (see ValidName)
+	at     time.Time
 }
 
 func New(b Backend) *FS { return &FS{b: b, dirs: map[dirKey]dirEntry{}} }
@@ -87,7 +88,7 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]int{}
+	seen := map[string]bool{} // case- and normalization-insensitive, like APFS
 	var out []*Storage
 	for _, id := range ids {
 		info, err := f.b.StorageInfo(ctx, id)
@@ -105,12 +106,11 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 		if dev := storageName(f.DeviceName); dev != "" && isGenericInternal(name) {
 			name = dev
 		}
-		if n := seen[name]; n > 0 {
-			seen[name] = n + 1
-			name = fmt.Sprintf("%s (%d)", name, n+1)
-		} else {
-			seen[name] = 1
+		key := func(s string) string { return strings.ToLower(norm.NFC.String(s)) }
+		for base, n := name, 2; seen[key(name)]; n++ {
+			name = fmt.Sprintf("%s (%d)", base, n)
 		}
+		seen[key(name)] = true
 		out = append(out, &Storage{ID: id, Name: name, Alias: alias, Info: info})
 	}
 	f.storages = out
@@ -119,18 +119,57 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 
 // ValidName reports whether a name that came from the device can be used as
 // one path component on the Mac: not empty, not "." or "..", valid UTF-8, no
-// "/" and no control characters. Devices are untrusted: a storage called ".."
-// would mount over the home folder, a file called "../x" would escape pull -r.
+// "/" and no unsafe characters (see unsafeRune). Devices are untrusted: a
+// storage called ".." would mount over the home folder, a file called "../x"
+// would escape pull -r, and "invoice\u202Efdp.exe" would show as "invoiceexe.pdf".
 func ValidName(s string) bool {
 	if s == "" || s == "." || s == ".." || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if r == '/' || unicode.IsControl(r) {
+		if r == '/' || unsafeRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// unsafeRune reports control characters, line and paragraph separators, and
+// the bidirectional controls that can make a name display as something else.
+// (Zero-width joiners stay allowed: emoji sequences in file names use them.)
+func unsafeRune(r rune) bool {
+	switch {
+	case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+		return true
+	case r == '\u061C', r == '\u200E', r == '\u200F',
+		r >= '\u202A' && r <= '\u202E', r >= '\u2066' && r <= '\u2069':
+		return true
+	}
+	return false
+}
+
+// Printable replaces unsafe characters in text from the device (model names,
+// errors) before it's printed or logged, so a hostile device can't send
+// terminal escape sequences or forge log lines.
+func Printable(s string) string {
+	if utf8.ValidString(s) {
+		ok := true
+		for _, r := range s {
+			if unsafeRune(r) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return s
+		}
+	}
+	return strings.Map(func(r rune) rune {
+		if r == utf8.RuneError || unsafeRune(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 // storageName turns a device-supplied storage description into a volume
@@ -144,9 +183,10 @@ func storageName(s string) string {
 	return s
 }
 
-// validObjects drops objects whose names can't be used safely (see ValidName).
-// Real phones never produce them; hostile devices are simply not shown.
-func validObjects(objs []*mtp.Object) []*mtp.Object {
+// validObjects drops objects whose names can't be used safely (see ValidName)
+// and reports how many it dropped. They're not shown, but a folder holding
+// them isn't empty (see Empty).
+func validObjects(objs []*mtp.Object) ([]*mtp.Object, int) {
 	for i, o := range objs {
 		if ValidName(o.Name) {
 			continue
@@ -157,9 +197,9 @@ func validObjects(objs []*mtp.Object) []*mtp.Object {
 				out = append(out, o)
 			}
 		}
-		return out
+		return out, len(objs) - len(out)
 	}
-	return objs
+	return objs, 0
 }
 
 // isGenericInternal reports descriptions that name the phone's built-in
@@ -257,9 +297,25 @@ func (f *FS) listLocked(ctx context.Context, storage, handle uint32) ([]*mtp.Obj
 	if err != nil {
 		return nil, err
 	}
-	objs = validObjects(objs)
-	f.dirs[k] = dirEntry{objs: objs, at: time.Now()}
+	objs, hidden := validObjects(objs)
+	f.dirs[k] = dirEntry{objs: objs, hidden: hidden, at: time.Now()}
 	return objs, nil
+}
+
+// Empty reports whether a folder has no children at all, counting the ones
+// ReadDir hides. Deleting a folder on the phone deletes everything in it, so
+// "rmdir" must not mistake hidden children for an empty folder.
+func (f *FS) Empty(ctx context.Context, e *Entry) (bool, error) {
+	if !e.IsDir || e.IsRoot() {
+		return false, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	objs, err := f.listLocked(ctx, e.StorageID, e.Handle)
+	if err != nil {
+		return false, err
+	}
+	return len(objs) == 0 && f.dirs[dirKey{e.StorageID, e.Handle}].hidden == 0, nil
 }
 
 // ReadDir lists a directory. For "/" it returns the storages.

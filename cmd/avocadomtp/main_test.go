@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -77,5 +78,15 @@ func TestChildPath(t *testing.T) {
 	}
 	if p, err := childPath(dir, "IMG 1.jpg"); err != nil || p != filepath.Join(dir, "IMG 1.jpg") {
 		t.Errorf("childPath(ok) = %q, %v", p, err)
+	}
+}
+
+func TestChildPathRefusesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "DCIM")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := childPath(dir, "DCIM"); err == nil {
+		t.Error("pull must not write through a symlink at the destination")
 	}
 }

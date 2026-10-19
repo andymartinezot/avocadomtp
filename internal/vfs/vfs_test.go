@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
@@ -172,5 +175,57 @@ func TestHostileObjectNamesAreHidden(t *testing.T) {
 		if e, err := f.Stat(ctx, p); err == nil && e.Handle != ptp.HandleRoot {
 			t.Errorf("Stat(%q) resolved hidden object %+v", p, e)
 		}
+	}
+}
+
+func TestUnsafeDisplayCharacters(t *testing.T) {
+	for _, name := range []string{"invoice‮fdp.exe", "a⁦b", "line break", "x‏y"} {
+		if ValidName(name) {
+			t.Errorf("ValidName(%q) should be false", name)
+		}
+		if got := Printable(name); strings.ContainsAny(got, "‮⁦ ‏") {
+			t.Errorf("Printable(%q) = %q", name, got)
+		}
+	}
+	if !ValidName("family 👨‍👩‍👧.jpg") {
+		t.Error("emoji sequences with zero-width joiners must stay valid")
+	}
+	if got := Printable("Pixel\x1b]0;x\x07\xff"); got != "Pixel?]0;x??" {
+		t.Errorf("Printable = %q", got)
+	}
+}
+
+func TestStorageNamesAreUniqueOnAPFS(t *testing.T) {
+	b := &hostileBackend{storages: map[uint32]*ptp.StorageInfo{
+		1: {Description: "X"}, 2: {Description: "X (2)"}, 3: {Description: "X"},
+		4: {Description: "sd"}, 5: {Description: "SD"},
+		6: {Description: "Música"}, 7: {Description: "Música"},
+	}}
+	got, err := New(b).Storages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, s := range got {
+		k := strings.ToLower(norm.NFC.String(s.Name))
+		if prev, dup := seen[k]; dup {
+			t.Errorf("storages %q and %q share a mount point", prev, s.Name)
+		}
+		seen[k] = s.Name
+	}
+}
+
+func TestEmptyCountsHiddenChildren(t *testing.T) {
+	b := &hostileBackend{
+		storages: map[uint32]*ptp.StorageInfo{1: {Description: "SD card"}},
+		objs:     []*mtp.Object{{Handle: 1, StorageID: 1, Name: "x\x01"}},
+	}
+	f := New(b)
+	root, err := f.Stat(context.Background(), "/SD card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty, err := f.Empty(context.Background(), root); err != nil || empty {
+		t.Fatalf("Empty = %v, %v; want false (a hidden child)", empty, err)
 	}
 }

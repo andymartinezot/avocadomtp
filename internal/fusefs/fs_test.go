@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"math/rand"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/winfsp/cgofuse/fuse"
 
@@ -314,5 +316,37 @@ func TestReadWriteOpenWithoutWritesStaysCheap(t *testing.T) {
 	}
 	if p.Stats().BytesOut != out {
 		t.Fatal("an unmodified file was uploaded")
+	}
+}
+
+// A folder whose only children have names vfs hides must not look empty:
+// deleting a folder on the phone deletes everything in it.
+func TestRmdirKeepsFoldersWithHiddenChildren(t *testing.T) {
+	f, p := newFS(t)
+	ctx := context.Background()
+	if rc := f.Mkdir("/keep", 0o755); rc != 0 {
+		t.Fatalf("mkdir: %d", rc)
+	}
+	if rc := f.Mkdir("/target", 0o755); rc != 0 {
+		t.Fatalf("mkdir: %d", rc)
+	}
+	dir, err := f.vfs.Stat(ctx, f.remotePath("/keep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bypass vfs, like a phone that already holds such a file.
+	if _, err := p.Upload(ctx, internal, dir.Handle, "bad\x01name", 3, time.Now(), strings.NewReader("abc")); err != nil {
+		t.Fatal(err)
+	}
+	f.vfs.Invalidate(internal, dir.Handle)
+	if rc := f.Rmdir("/keep"); rc != -fuse.ENOTEMPTY {
+		t.Fatalf("rmdir of a folder with a hidden child = %d, want ENOTEMPTY", rc)
+	}
+	if rc := f.Rename("/target", "/keep"); rc != -fuse.ENOTEMPTY {
+		t.Fatalf("rename over a folder with a hidden child = %d, want ENOTEMPTY", rc)
+	}
+	objs, err := p.List(ctx, internal, dir.Handle)
+	if err != nil || len(objs) != 1 {
+		t.Fatalf("the hidden file must still be on the phone: %v %v", objs, err)
 	}
 }
