@@ -93,6 +93,13 @@ struct MenuView: View {
                 Text("Volumes").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 if st.connected {
+                    if !st.mounts.isEmpty {
+                        Button("Eject all") { model.ejectAll(st.mounts) }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .disabled(model.busy)
+                            .help("Unmount every volume (safe to unplug afterwards)")
+                    }
                     Button("Mount all") { model.mountAll() }
                         .buttonStyle(.link)
                         .font(.caption)

@@ -95,6 +95,14 @@ final class AppModel: ObservableObject {
         perform { try DaemonConnection().call(["op": "eject", "storage": mount.storageId]) }
     }
 
+    /// Ejects every volume; they stay unmounted until "Mount all" or a reconnect.
+    func ejectAll(_ mounts: [ActivityState.Mount]) {
+        let ids = mounts.map(\.storageId)
+        perform {
+            for id in ids { try DaemonConnection().call(["op": "eject", "storage": id]) }
+        }
+    }
+
     func mountAll() {
         perform { try DaemonConnection().call(["op": "mount"]) }
     }

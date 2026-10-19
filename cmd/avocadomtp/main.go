@@ -29,8 +29,9 @@ Commands:
   mv SRC DST                      rename or move
   shell                           interactive session (cd, ls, pull, push, ...)
   watch                           live view: phone, mounts, transfers and speed
-  eject STORAGE                   unmount one Finder volume (until "mount" or reconnect)
+  eject STORAGE | --all           unmount one or every Finder volume (until "mount" or reconnect)
   mount                           mount all Finder volumes again
+  uninstall                       remove the service and the menu bar app (keeps your phone's files)
 
 Background daemon (owns the USB connection; used by the CLI and Finder):
   daemon [--no-mount]             run in the foreground; mounts each storage as a
@@ -81,6 +82,8 @@ func runMain(serial string, direct bool, args []string) error {
 		return ejectCmd(args[1:])
 	case "mount":
 		return mountCmd()
+	case "uninstall":
+		return uninstallAll()
 	}
 	if _, ok := commands[args[0]]; !ok && args[0] != "shell" {
 		return fmt.Errorf("unknown command %q (see avocadomtp --help)", args[0])

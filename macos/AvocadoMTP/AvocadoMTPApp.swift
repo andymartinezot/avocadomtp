@@ -1,9 +1,22 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 @main
 struct AvocadoMTPApp: App {
     @StateObject private var model = AppModel()
+
+    init() {
+        // `AvocadoMTP --uninstall` (run by `avocadomtp uninstall`): undo what only
+        // the app itself can — its login item and its preferences — then quit.
+        if CommandLine.arguments.contains("--uninstall") {
+            try? SMAppService.mainApp.unregister()
+            if let id = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: id)
+            }
+            exit(0)
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra {
