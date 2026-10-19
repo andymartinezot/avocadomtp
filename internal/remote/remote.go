@@ -1,5 +1,5 @@
 // Package remote defines the file operations shared by a direct USB session
-// and a connection to the avocado daemon.
+// and a connection to the avocadomtp daemon.
 package remote
 
 import (

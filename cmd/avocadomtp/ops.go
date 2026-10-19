@@ -116,7 +116,7 @@ func (c *client) pullEntry(ctx context.Context, e *vfs.Entry, local string, recu
 		return nil
 	}
 
-	tmp := local + ".avocado-part"
+	tmp := local + ".avocadomtp-part"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return err

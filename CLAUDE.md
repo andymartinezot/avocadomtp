@@ -7,16 +7,16 @@ User-facing docs: `README.md`; interactive architecture/perf page: `docs/index.h
 ## Commands
 
 ```sh
-go build -o bin/avocado ./cmd/avocado     # needs: brew install go libusb; FUSE-T for mounts
+go build -o bin/avocadomtp ./cmd/avocadomtp     # needs: brew install go libusb; FUSE-T for mounts
 go test -race ./...                       # all tests run against an in-memory fake phone
 gofmt -l . && go vet ./...                # must be clean before committing
-./bin/avocado daemon install              # (re)install the LaunchAgent with the fresh binary
-tail -f ~/Library/Logs/avocado.log        # daemon log
-AVOCADO_FUSE_DEBUG=1 ./bin/avocado daemon # foreground daemon tracing every FUSE call
+./bin/avocadomtp daemon install              # (re)install the LaunchAgent with the fresh binary
+tail -f ~/Library/Logs/avocadomtp.log        # daemon log
+AVOCADOMTP_FUSE_DEBUG=1 ./bin/avocadomtp daemon # foreground daemon tracing every FUSE call
 ```
 
 After changing daemon or fusefs code, the running LaunchAgent still uses the old binary:
-run `./bin/avocado daemon install` again (it copies the binary and restarts the agent).
+run `./bin/avocadomtp daemon install` again (it copies the binary and restarts the agent).
 
 ## Architecture (data path)
 
@@ -38,7 +38,8 @@ CLI ─ Unix socket (internal/daemon) ──────────────
 | `internal/fusefs` | cgofuse FS per storage, mount manager (FSKit → NFS fallback), metadata shadow store |
 | `internal/errcode` | MTP/USB errors → POSIX errno (shared by daemon and fusefs) |
 | `internal/bufpool` | pooled transfer buffers |
-| `cmd/avocado` | CLI, shell, `daemon` subcommands |
+| `internal/activity` | hub of phone/mount/transfer state; `watch` snapshots for the menu bar (idle: no ticks) |
+| `cmd/avocadomtp` | CLI, shell, `daemon` subcommands |
 
 ## Invariants: don't break these
 
@@ -48,7 +49,7 @@ CLI ─ Unix socket (internal/daemon) ──────────────
   while writing, and every upload resends the whole file.
 - **fusefs stages lazily**: FUSE-T's FSKit backend opens every file `O_RDWR`; download for staging
   only on the first Write/Truncate (see `stage`). Plain reads must never copy the file.
-- **Overwrites upload to `.avocado-<name>` then swap**: MTP can't overwrite, and a failed upload
+- **Overwrites upload to `.avocadomtp-<name>` then swap**: MTP can't overwrite, and a failed upload
   must not destroy the original.
 - **macOS metadata never reaches the phone**: `isShadow` names (`._*`, `.DS_Store`, …) live in the
   in-memory shadow store and are hidden from listings; `.Trashes` and friends are refused (EACCES).
@@ -56,7 +57,10 @@ CLI ─ Unix socket (internal/daemon) ──────────────
 - **No polling while idle**: the daemon reacts to USB hotplug; the poll loop is only the fallback.
 - **The session is marked broken after any non-MTP error**; callers reconnect (`Healthy`, daemon `drop`).
 - **Mount points live in `~/AvocadoMTP`** (`/Volumes` is root-only); empty ones are removed on unmount.
-- **The LaunchAgent runs `~/Library/Application Support/AvocadoMTP/bin/avocado`**, never a binary
+- **Service control is launchd's**: `stop` = bootout (no restart), crash = restart
+  (`KeepAlive.SuccessfulExit=false`; the daemon exits 0 on SIGTERM), autostart = `launchctl enable/disable`
+  (not a plist flag: `SuccessfulExit` implies `RunAtLoad`).
+- **The LaunchAgent runs `~/Library/Application Support/AvocadoMTP/bin/avocadomtp`**, never a binary
   under `~/Documents` (TCC blocks launchd agents there and they hang in dyld).
 
 ## Conventions
@@ -66,9 +70,9 @@ CLI ─ Unix socket (internal/daemon) ──────────────
 - New behavior gets a test against `mtptest` (fake phone); daemon tests use a real Unix socket
   (keep socket paths short: macOS limits them to 104 bytes, so `/tmp`, not `t.TempDir()`).
 - Verify on a real phone for anything touching USB, mounting or Finder behavior; the fake can't
-  reproduce kernel/FUSE-T call patterns (use `AVOCADO_FUSE_DEBUG=1` to see them).
+  reproduce kernel/FUSE-T call patterns (use `AVOCADOMTP_FUSE_DEBUG=1` to see them).
 - Keep resource use low: pool large buffers (`bufpool`), avoid per-request allocations on hot
-  paths, and measure before/after with real transfers (`avocado daemon status` shows counters).
+  paths, and measure before/after with real transfers (`avocadomtp daemon status` shows counters).
 - Commits: no AI/Claude attribution lines. Push via the `github.com-ot` SSH alias
   (`origin` = `git@github.com-ot:andymartinezot/avocadomcp.git`).
 

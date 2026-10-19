@@ -45,7 +45,7 @@ func (c *client) shell() error {
 
 	in := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Printf("avocado:%s> ", cwd)
+		fmt.Printf("avocadomtp:%s> ", cwd)
 		if !in.Scan() {
 			fmt.Println()
 			return in.Err()

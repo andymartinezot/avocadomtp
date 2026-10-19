@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/winfsp/cgofuse/fuse"
 
+	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
@@ -32,7 +34,7 @@ func Available() bool {
 // Settings → General → Login Items & Extensions → File System Extensions sets
 // it, so we ask mount(8), which refuses disabled modules up front.
 func FSKitEnabled() bool {
-	dir, err := os.MkdirTemp("", "avocado-probe")
+	dir, err := os.MkdirTemp("", "avocadomtp-probe")
 	if err != nil {
 		return false
 	}
@@ -49,17 +51,60 @@ type Manager struct {
 	TmpDir  string   // staging area for files being written
 	Log     *log.Logger
 	Debug   *log.Logger // logs every file system call when set
+	// Activity, if set, receives the list of mounts and transfer progress.
+	Activity *activity.Hub
 
 	mu          sync.Mutex
 	mounts      map[uint32]*mounted
+	ejected     map[uint32]bool // unmounted by the user; stay off until remount or reconnect
 	fskitFailed bool
 }
 
 type mounted struct {
-	name string
-	dir  string
-	host *fuse.FileSystemHost
-	done chan struct{}
+	id      uint32
+	name    string
+	dir     string
+	backend string
+	host    *fuse.FileSystemHost
+	done    chan struct{}
+}
+
+// publishLocked sends the current mounts to the activity hub.
+func (m *Manager) publishLocked() {
+	if m.Activity == nil {
+		return
+	}
+	list := make([]activity.Mount, 0, len(m.mounts))
+	for _, mt := range m.mounts {
+		list = append(list, activity.Mount{StorageID: mt.id, Name: mt.name, Path: mt.dir, Backend: mt.backend})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	m.Activity.SetMounts(list)
+}
+
+// Eject unmounts one storage and keeps it unmounted until Remount or until
+// the phone reconnects.
+func (m *Manager) Eject(storageID uint32) error {
+	m.mu.Lock()
+	mt := m.mounts[storageID]
+	if m.ejected == nil {
+		m.ejected = map[uint32]bool{}
+	}
+	m.ejected[storageID] = true
+	m.mu.Unlock()
+	if mt == nil {
+		return fmt.Errorf("storage %08X is not mounted", storageID)
+	}
+	m.unmount(mt)
+	return nil
+}
+
+// Remount mounts every storage again, including ejected ones.
+func (m *Manager) Remount(ctx context.Context, r remote.Remote) error {
+	m.mu.Lock()
+	m.ejected = nil
+	m.mu.Unlock()
+	return m.MountAll(ctx, r)
 }
 
 func (m *Manager) logf(format string, args ...any) {
@@ -82,7 +127,7 @@ func (m *Manager) MountAll(ctx context.Context, r remote.Remote) error {
 		m.mounts = map[uint32]*mounted{}
 	}
 	for _, st := range storages {
-		if _, ok := m.mounts[st.ID]; ok {
+		if _, ok := m.mounts[st.ID]; ok || m.ejected[st.ID] {
 			continue
 		}
 		mt, err := m.mount(r, st)
@@ -92,6 +137,7 @@ func (m *Manager) MountAll(ctx context.Context, r remote.Remote) error {
 		}
 		m.mounts[st.ID] = mt
 	}
+	m.publishLocked()
 	return nil
 }
 
@@ -123,13 +169,20 @@ func (m *Manager) mountAt(r remote.Remote, st *vfs.Storage, root string, options
 	}
 	fs := New(r, st.Name, st.ID, m.TmpDir)
 	fs.Debug = m.Debug
+	fs.Activity = m.Activity
 	host := fuse.NewFileSystemHost(fs)
 	host.SetCapCaseInsensitive(false)
 	opts := []string{"-o", "volname=" + st.Name}
 	for _, o := range options {
 		opts = append(opts, "-o", o)
 	}
-	mt := &mounted{name: st.Name, dir: dir, host: host, done: make(chan struct{})}
+	backend := "nfs"
+	for _, o := range options {
+		if o == "backend=fskit" {
+			backend = "fskit"
+		}
+	}
+	mt := &mounted{id: st.ID, name: st.Name, dir: dir, backend: backend, host: host, done: make(chan struct{})}
 	go func() {
 		host.Mount(dir, opts)
 		// Remove the empty mount point so nothing writes to the Mac's disk by mistake.
@@ -141,6 +194,7 @@ func (m *Manager) mountAt(r remote.Remote, st *vfs.Storage, root string, options
 		m.mu.Lock()
 		if m.mounts[st.ID] == mt {
 			delete(m.mounts, st.ID)
+			m.publishLocked() // e.g. ejected from Finder
 		}
 		m.mu.Unlock()
 		m.logf("unmounted %s", dir)
@@ -177,24 +231,33 @@ func isMountPoint(dir string) bool {
 	return a.Fsid != b.Fsid
 }
 
-// UnmountAll unmounts every volume and waits for the mounts to end.
+// UnmountAll unmounts every volume and waits for the mounts to end. It also
+// forgets ejected storages, so they mount again when the phone reconnects.
 func (m *Manager) UnmountAll() {
 	m.mu.Lock()
 	var all []*mounted
 	for _, mt := range m.mounts {
 		all = append(all, mt)
 	}
-	m.mounts = nil
+	m.ejected = nil
 	m.mu.Unlock()
 	for _, mt := range all {
-		if !mt.host.Unmount() {
-			_ = exec.Command("umount", mt.dir).Run()
-		}
-		select {
-		case <-mt.done:
-		case <-time.After(10 * time.Second):
-			_ = exec.Command("diskutil", "unmount", "force", mt.dir).Run()
-		}
+		m.unmount(mt)
+	}
+	m.mu.Lock()
+	m.mounts = nil
+	m.publishLocked()
+	m.mu.Unlock()
+}
+
+func (m *Manager) unmount(mt *mounted) {
+	if !mt.host.Unmount() {
+		_ = exec.Command("umount", mt.dir).Run()
+	}
+	select {
+	case <-mt.done:
+	case <-time.After(10 * time.Second):
+		_ = exec.Command("diskutil", "unmount", "force", mt.dir).Run()
 	}
 }
 

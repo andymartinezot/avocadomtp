@@ -35,8 +35,8 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 ```sh
 brew install go libusb            # build dependencies
 brew install --cask fuse-t        # Finder volumes (free, no kernel extension)
-go build -o bin/avocado ./cmd/avocado
-./bin/avocado daemon install      # start at login; mounts the phone in Finder
+go build -o bin/avocadomtp ./cmd/avocadomtp
+./bin/avocadomtp daemon install      # start at login; mounts the phone in Finder
 ```
 
 Then:
@@ -57,12 +57,12 @@ and a small background daemon owns the USB connection and serves both the Finder
 flowchart LR
     subgraph Mac["🍎 macOS"]
         Finder["Finder · Quick Look · Terminal apps"]
-        CLI["avocado CLI"]
+        CLI["avocadomtp CLI"]
         subgraph Kernel["Kernel / system"]
             VFS["VFS"]
             FSKit["FUSE-T<br/>(FSKit backend, or local NFS)"]
         end
-        subgraph Daemon["avocado daemon (LaunchAgent)"]
+        subgraph Daemon["avocadomtp daemon (LaunchAgent)"]
             FUSEFS["fusefs<br/>one FS per storage"]
             Sock["Unix socket server"]
             VFSC["vfs<br/>path ↔ handle cache"]
@@ -91,7 +91,7 @@ flowchart LR
 | Sharing | `internal/daemon` | One USB owner for every client; Unix-socket protocol; LaunchAgent install |
 | Finder | `internal/fusefs` | FUSE file system per storage: read-ahead, write staging, macOS-metadata shadow store |
 | Memory | `internal/bufpool` | Pooled transfer buffers (64 KiB–16 MiB) |
-| Entry point | `cmd/avocado` | CLI, interactive shell, `avocado daemon` |
+| Entry point | `cmd/avocadomtp` | CLI, interactive shell, `avocadomtp daemon` |
 
 ### One MTP transaction
 
@@ -239,19 +239,19 @@ What made the difference:
 ## CLI reference
 
 ```sh
-avocado devices                                   # list connected MTP devices
-avocado info                                      # model, serial, storages, free space
-avocado ls -l "/Retroid Pocket 6/DCIM/Camera"
-avocado pull -r "/Retroid Pocket 6/DCIM/Camera" ~/Pictures/phone
-avocado push -r ~/Music "/Retroid6/Music"
-avocado mkdir -p "/Retroid6/Backups/2026"
-avocado mv "/Retroid6/a.txt" "/Retroid6/Backups/b.txt"
-avocado rm -r "/Retroid6/Old"
-avocado shell                                     # interactive: cd, ls, pull, push, lcd, lls …
+avocadomtp devices                                   # list connected MTP devices
+avocadomtp info                                      # model, serial, storages, free space
+avocadomtp ls -l "/Retroid Pocket 6/DCIM/Camera"
+avocadomtp pull -r "/Retroid Pocket 6/DCIM/Camera" ~/Pictures/phone
+avocadomtp push -r ~/Music "/Retroid6/Music"
+avocadomtp mkdir -p "/Retroid6/Backups/2026"
+avocadomtp mv "/Retroid6/a.txt" "/Retroid6/Backups/b.txt"
+avocadomtp rm -r "/Retroid6/Old"
+avocadomtp shell                                     # interactive: cd, ls, pull, push, lcd, lls …
 
-avocado daemon [--no-mount]                       # run in the foreground
-avocado daemon install | uninstall                # start at login (LaunchAgent) / remove
-avocado daemon status                             # phone, storages, transfer counters
+avocadomtp watch                                  # live: phone, volumes, transfers, speed
+avocadomtp eject Retroid6                         # unmount one volume (until mount/reconnect)
+avocadomtp mount                                  # mount all volumes again
 ```
 
 - Remote paths start with the storage name. The internal storage is named after the phone
@@ -259,6 +259,23 @@ avocado daemon status                             # phone, storages, transfer co
 - Flags may appear anywhere; use `--` before a path that starts with `-`. `-d SERIAL` picks a device.
 - When the daemon runs, the CLI goes through it; `--direct` talks to USB instead.
 - In the shell, Ctrl-C cancels a transfer and, at the prompt, quits.
+
+### Background service (on / off)
+
+The daemon runs as a LaunchAgent. You decide whether it runs, and whether it starts at login:
+
+```sh
+avocadomtp daemon install            # set up the service (copies the binary) and start it
+avocadomtp daemon stop               # stop now: volumes unmount, launchd won't restart it
+avocadomtp daemon start              # start now
+avocadomtp daemon autostart off      # don't start at login (on by default)
+avocadomtp daemon status             # running?, autostart?, phone, volumes, traffic
+avocadomtp daemon uninstall          # stop and remove the service
+avocadomtp daemon [--no-mount]       # run in the foreground instead (debugging)
+```
+
+launchd restarts the daemon if it crashes, never after a deliberate `stop`.
+`autostart off` uses launchd's persistent enable/disable switch, so it survives reboots.
 
 ---
 
@@ -273,8 +290,8 @@ avocado daemon status                             # phone, storages, transfer co
 | Spotlight doesn't index the phone | the volume reports `.metadata_never_index` |
 | Names with accents work (`año 🥑.bin`) | macOS (NFD) and Android (NFC) names are normalized |
 
-`AVOCADO_FUSE_DEBUG=1` logs every file system call; the LaunchAgent logs to `~/Library/Logs/avocado.log`.
-`avocado daemon install` copies the binary to `~/Library/Application Support/AvocadoMTP/bin/`:
+`AVOCADOMTP_FUSE_DEBUG=1` logs every file system call; the LaunchAgent logs to `~/Library/Logs/avocadomtp.log`.
+`avocadomtp daemon install` copies the binary to `~/Library/Application Support/AvocadoMTP/bin/`:
 launchd agents can't run from privacy-protected folders such as `~/Documents`.
 
 ---
@@ -282,7 +299,7 @@ launchd agents can't run from privacy-protected folders such as `~/Documents`.
 ## Project layout
 
 ```
-cmd/avocado/          CLI, shell, daemon command
+cmd/avocadomtp/          CLI, shell, daemon command
 internal/usbx/        libusb wrapper + hotplug (cgo)
 internal/ptp/         PTP/MTP codec
 internal/mtp/         session, operations; mtptest/ = in-memory fake phone
@@ -308,7 +325,7 @@ docs/index.html       interactive architecture & performance page
 | `claim MTP interface: LIBUSB_ERROR_ACCESS` | Another app holds the phone (the daemon, Android File Transfer, OpenMTP, MacDroid) |
 | `… is not responding` | Unplug and reconnect, or toggle the phone's USB mode |
 | Volumes appear under a "fuse-t" server | Enable fuse-t in File System Extensions (see Quick start) |
-| Daemon doesn't start after a rebuild | Run `avocado daemon install` again (it copies the new binary) |
+| Daemon doesn't start after a rebuild | Run `avocadomtp daemon install` again (it copies the new binary) |
 
 ---
 
@@ -318,5 +335,7 @@ docs/index.html       interactive architecture & performance page
 - [x] Daemon shared by CLI and Finder; chunked transfers so browsing never freezes
 - [x] Finder volumes via FUSE-T, named after the device
 - [x] Resource optimization: hotplug, adaptive read-ahead, lazy staging, buffer pools
-- [ ] Menu bar app: mounts, paths, live transfers and speed, eject
+- [x] Service control: start / stop / start-at-login
+- [x] Daemon API for the menu bar: `watch` event stream, mounts, eject / mount
+- [ ] Menu bar app (SwiftUI): mounts, paths, live transfers and speed, eject, on/off
 - [ ] Distribution: Homebrew tap, then a signed `.app` in a DMG

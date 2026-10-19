@@ -248,7 +248,7 @@ func (c *Context) Open(cand *Candidate) (*Device, error) {
 	if err != nil {
 		C.libusb_close(h)
 		if errors.Is(err, ErrAccess) || errors.Is(err, ErrBusy) {
-			return nil, fmt.Errorf("claim MTP interface: %w (another app such as the avocado daemon, Android File Transfer, OpenMTP or MacDroid may be using the phone)", err)
+			return nil, fmt.Errorf("claim MTP interface: %w (another app such as the avocadomtp daemon, Android File Transfer, OpenMTP or MacDroid may be using the phone)", err)
 		}
 		return nil, fmt.Errorf("claim MTP interface: %w", err)
 	}
