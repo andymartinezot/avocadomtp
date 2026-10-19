@@ -87,3 +87,90 @@ func TestDeviceName(t *testing.T) {
 		}
 	}
 }
+
+func TestValidName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"": false, ".": false, "..": false, "a/b": false, "../x": false, "x\x00": false,
+		"\x1b[2J": false, "tab\there": false, "\xff\xfe": false,
+		"ok": true, "Música": true, ".hidden": true, "a,b": true, "IMG 1 (2).jpg": true, "...": true,
+	} {
+		if got := ValidName(name); got != want {
+			t.Errorf("ValidName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// hostileBackend is a device that sends whatever names a test gives it.
+type hostileBackend struct {
+	storages map[uint32]*ptp.StorageInfo
+	objs     []*mtp.Object // children of storage 1's root
+}
+
+func (b *hostileBackend) StorageIDs(context.Context) ([]uint32, error) {
+	ids := make([]uint32, 0, len(b.storages))
+	for id := uint32(1); int(id) <= len(b.storages); id++ {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+func (b *hostileBackend) StorageInfo(_ context.Context, id uint32) (*ptp.StorageInfo, error) {
+	return b.storages[id], nil
+}
+func (b *hostileBackend) List(_ context.Context, storage, parent uint32) ([]*mtp.Object, error) {
+	if storage == 1 && parent == ptp.HandleRoot {
+		return b.objs, nil
+	}
+	return nil, nil
+}
+
+func TestHostileStorageNames(t *testing.T) {
+	b := &hostileBackend{storages: map[uint32]*ptp.StorageInfo{
+		1: {Description: ".."},
+		2: {Description: "."},
+		3: {Description: "\x1b]0;owned\x07"},
+		4: {Description: "", VolumeLabel: "../x"},
+		5: {Description: ".hidden"},
+		6: {Description: "Internal shared storage"}, // DeviceName below is hostile
+		7: {Description: "SD/Card"},
+	}}
+	f := New(b)
+	f.DeviceName = ".."
+	got, err := f.Storages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Storage 00000001", "Storage 00000002", "Storage 00000003", "-x", "hidden", "Internal shared storage", "SD-Card"}
+	for i, s := range got {
+		if s.Name != want[i] {
+			t.Errorf("storage %d: name %q, want %q", s.ID, s.Name, want[i])
+		}
+		if !ValidName(s.Name) || s.Name[0] == '.' {
+			t.Errorf("storage %d: unsafe name %q", s.ID, s.Name)
+		}
+	}
+}
+
+func TestHostileObjectNamesAreHidden(t *testing.T) {
+	b := &hostileBackend{
+		storages: map[uint32]*ptp.StorageInfo{1: {Description: "SD card"}},
+		objs: []*mtp.Object{
+			{Handle: 1, StorageID: 1, Name: "../evil"},
+			{Handle: 2, StorageID: 1, Name: "a/b", IsDir: true},
+			{Handle: 3, StorageID: 1, Name: "x\x01"},
+			{Handle: 4, StorageID: 1, Name: ".."},
+			{Handle: 5, StorageID: 1, Name: ""},
+			{Handle: 6, StorageID: 1, Name: "good.txt"},
+		},
+	}
+	f := New(b)
+	ctx := context.Background()
+	entries, err := f.ReadDir(ctx, "/SD card")
+	if err != nil || len(entries) != 1 || entries[0].Name != "good.txt" {
+		t.Fatalf("listing should only show good.txt: %+v %v", entries, err)
+	}
+	for _, p := range []string{"/SD card/x\x01", "/SD card/"} {
+		if e, err := f.Stat(ctx, p); err == nil && e.Handle != ptp.HandleRoot {
+			t.Errorf("Stat(%q) resolved hidden object %+v", p, e)
+		}
+	}
+}

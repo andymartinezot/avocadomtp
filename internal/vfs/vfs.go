@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -92,18 +94,17 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 		if err != nil {
 			return nil, err
 		}
-		name := strings.TrimSpace(info.Description)
+		name := storageName(info.Description)
 		if name == "" {
-			name = strings.TrimSpace(info.VolumeLabel)
+			name = storageName(info.VolumeLabel)
 		}
 		if name == "" {
 			name = fmt.Sprintf("Storage %08X", id)
 		}
-		alias := strings.ReplaceAll(name, "/", "-")
-		if f.DeviceName != "" && isGenericInternal(name) {
-			name = f.DeviceName
+		alias := name
+		if dev := storageName(f.DeviceName); dev != "" && isGenericInternal(name) {
+			name = dev
 		}
-		name = strings.ReplaceAll(name, "/", "-")
 		if n := seen[name]; n > 0 {
 			seen[name] = n + 1
 			name = fmt.Sprintf("%s (%d)", name, n+1)
@@ -114,6 +115,51 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 	}
 	f.storages = out
 	return out, nil
+}
+
+// ValidName reports whether a name that came from the device can be used as
+// one path component on the Mac: not empty, not "." or "..", valid UTF-8, no
+// "/" and no control characters. Devices are untrusted: a storage called ".."
+// would mount over the home folder, a file called "../x" would escape pull -r.
+func ValidName(s string) bool {
+	if s == "" || s == "." || s == ".." || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r == '/' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// storageName turns a device-supplied storage description into a volume
+// name, or "" if nothing usable is left. Slashes become dashes and leading
+// dots go, so a volume is never hidden or named "." or "..".
+func storageName(s string) string {
+	s = strings.TrimLeft(strings.ReplaceAll(strings.TrimSpace(s), "/", "-"), ".")
+	if !ValidName(s) {
+		return ""
+	}
+	return s
+}
+
+// validObjects drops objects whose names can't be used safely (see ValidName).
+// Real phones never produce them; hostile devices are simply not shown.
+func validObjects(objs []*mtp.Object) []*mtp.Object {
+	for i, o := range objs {
+		if ValidName(o.Name) {
+			continue
+		}
+		out := append([]*mtp.Object(nil), objs[:i]...)
+		for _, o := range objs[i+1:] {
+			if ValidName(o.Name) {
+				out = append(out, o)
+			}
+		}
+		return out
+	}
+	return objs
 }
 
 // isGenericInternal reports descriptions that name the phone's built-in
@@ -211,6 +257,7 @@ func (f *FS) listLocked(ctx context.Context, storage, handle uint32) ([]*mtp.Obj
 	if err != nil {
 		return nil, err
 	}
+	objs = validObjects(objs)
 	f.dirs[k] = dirEntry{objs: objs, at: time.Now()}
 	return objs, nil
 }

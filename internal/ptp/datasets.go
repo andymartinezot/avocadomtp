@@ -177,6 +177,11 @@ type PropValue struct {
 func DecodeObjectPropList(b []byte) ([]PropValue, error) {
 	d := NewDecoder(b)
 	n := d.U32()
+	// Every element takes at least 8 bytes (handle, code, type): a larger count
+	// than the data can hold is malformed, and must not size the allocation.
+	if d.Err != nil || uint64(n)*8 > uint64(d.Remaining()) {
+		return nil, fmt.Errorf("ObjectPropList: %w", ErrShort)
+	}
 	out := make([]PropValue, 0, n)
 	for i := uint32(0); i < n && d.Err == nil; i++ {
 		pv := PropValue{Handle: d.U32(), Code: d.U16(), DataType: d.U16()}

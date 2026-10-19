@@ -119,7 +119,7 @@ func listDevices(w io.Writer) error {
 		return device.ErrNoDevice
 	}
 	for _, c := range cands {
-		fmt.Fprintf(w, "%-16s %s\n", c.Serial, c)
+		fmt.Fprintf(w, "%-16s %s\n", printable(c.Serial), printable(c.String()))
 	}
 	return nil
 }

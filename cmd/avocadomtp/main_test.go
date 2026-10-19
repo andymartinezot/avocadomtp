@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -55,5 +56,26 @@ func TestVolumesLine(t *testing.T) {
 		if got := volumesLine(c.fuseT, c.fskit); got != c.want {
 			t.Errorf("volumesLine(%v, %v) = %q, want %q", c.fuseT, c.fskit, got, c.want)
 		}
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	if got := printable("Pixel\x1b]0;owned\x07 8"); got != "Pixel?]0;owned? 8" {
+		t.Errorf("printable = %q", got)
+	}
+	if got := printable("Música"); got != "Música" {
+		t.Errorf("printable changed a normal name: %q", got)
+	}
+}
+
+func TestChildPath(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"..", "../x", "a/b", "/abs", "", "x\x00"} {
+		if p, err := childPath(dir, name); err == nil {
+			t.Errorf("childPath(%q) = %q, want an error", name, p)
+		}
+	}
+	if p, err := childPath(dir, "IMG 1.jpg"); err != nil || p != filepath.Join(dir, "IMG 1.jpg") {
+		t.Errorf("childPath(ok) = %q, %v", p, err)
 	}
 }

@@ -323,12 +323,23 @@ func (s *Session) sendData(ctx context.Context, tx uint32, op uint16, r io.Reade
 	}
 }
 
-// writerTo returns a writer that appends to *dst.
+// maxDataset caps datasets read into memory (listings, device and storage
+// info): a real folder listing of 100k files is ~20 MiB, a device that sends
+// more is broken or hostile. File contents never go through writerTo.
+const maxDataset = 64 << 20
+
+// ErrDatasetTooLarge is returned when a device sends a dataset over maxDataset.
+var ErrDatasetTooLarge = errors.New("mtp: dataset from the device is too large")
+
+// writerTo returns a writer that appends to *dst, up to maxDataset bytes.
 func writerTo(dst *[]byte) io.Writer { return (*sliceWriter)(dst) }
 
 type sliceWriter []byte
 
 func (w *sliceWriter) Write(p []byte) (int, error) {
+	if len(*w)+len(p) > maxDataset {
+		return 0, ErrDatasetTooLarge
+	}
 	*w = append(*w, p...)
 	return len(p), nil
 }

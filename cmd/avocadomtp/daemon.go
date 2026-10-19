@@ -196,10 +196,10 @@ func daemonStatus(socket string) error {
 		return err
 	}
 	if !st.Connected {
-		fmt.Printf("phone:     not connected (%s)\n", st.Error)
+		fmt.Printf("phone:     not connected (%s)\n", printable(st.Error))
 		return nil
 	}
-	fmt.Printf("phone:     %s %s (serial %s)\n", st.Device.Manufacturer, st.Device.Model, st.Device.Serial)
+	fmt.Printf("phone:     %s %s (serial %s)\n", printable(st.Device.Manufacturer), printable(st.Device.Model), printable(st.Device.Serial))
 	for _, s := range st.Storages {
 		ro := ""
 		if s.ReadOnly {
