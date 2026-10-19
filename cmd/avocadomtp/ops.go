@@ -11,17 +11,18 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
 func (c *client) info(ctx context.Context, w io.Writer) error {
 	di := c.r.Device()
-	fmt.Fprintf(w, "Device:   %s %s\n", di.Manufacturer, di.Model)
-	fmt.Fprintf(w, "Version:  %s\n", di.Version)
-	fmt.Fprintf(w, "Serial:   %s\n", di.Serial)
-	fmt.Fprintf(w, "USB:      %s\n", di.USB)
-	fmt.Fprintf(w, "MTP ext:  %s\n", di.Extension)
+	fmt.Fprintf(w, "Device:   %s %s\n", printable(di.Manufacturer), printable(di.Model))
+	fmt.Fprintf(w, "Version:  %s\n", printable(di.Version))
+	fmt.Fprintf(w, "Serial:   %s\n", printable(di.Serial))
+	fmt.Fprintf(w, "USB:      %s\n", printable(di.USB))
+	fmt.Fprintf(w, "MTP ext:  %s\n", printable(di.Extension))
 	fmt.Fprintf(w, "Via:      %s\n", c.via)
 	storages, err := c.fs.Storages(ctx)
 	if err != nil {
@@ -70,6 +71,29 @@ func (c *client) ls(ctx context.Context, w io.Writer, p string, long bool) error
 	return tw.Flush()
 }
 
+// printable replaces control characters in text that came from the device,
+// so a hostile phone can't send terminal escape sequences. (File and storage
+// names are already checked by vfs.ValidName.)
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
+// childPath joins a device-supplied name onto a local folder, refusing
+// anything that would land outside it (vfs already hides such names; this
+// is the last line before writing to the Mac).
+func childPath(dir, name string) (string, error) {
+	p := filepath.Join(dir, name)
+	if !vfs.ValidName(name) || filepath.Dir(p) != filepath.Clean(dir) {
+		return "", fmt.Errorf("refusing to write %q outside %s", name, dir)
+	}
+	return p, nil
+}
+
 func date(e *vfs.Entry) string {
 	if e.Modified.IsZero() {
 		return "-"
@@ -91,7 +115,9 @@ func (c *client) pull(ctx context.Context, remote, local string, recursive bool)
 		local = "."
 	}
 	if fi, err := os.Stat(local); err == nil && fi.IsDir() {
-		local = filepath.Join(local, e.Name)
+		if local, err = childPath(local, e.Name); err != nil {
+			return err
+		}
 	}
 	return c.pullEntry(ctx, e, local, recursive)
 }
@@ -109,7 +135,11 @@ func (c *client) pullEntry(ctx context.Context, e *vfs.Entry, local string, recu
 			return err
 		}
 		for _, ch := range children {
-			if err := c.pullEntry(ctx, ch, filepath.Join(local, ch.Name), true); err != nil {
+			dst, err := childPath(local, ch.Name)
+			if err != nil {
+				return err
+			}
+			if err := c.pullEntry(ctx, ch, dst, true); err != nil {
 				return err
 			}
 		}

@@ -118,3 +118,16 @@ func TestParseDate(t *testing.T) {
 		t.Error("expected zero time")
 	}
 }
+
+// A device-supplied element count larger than the data must fail cleanly,
+// not panic or size a huge allocation.
+func TestObjectPropListHostileCount(t *testing.T) {
+	for _, b := range [][]byte{
+		{0xff, 0xff, 0xff, 0xff},                   // 4 billion elements, no data
+		{0x10, 0x00, 0x00, 0x00, 1, 2, 3, 4, 5, 6}, // 16 elements, 6 bytes
+	} {
+		if _, err := DecodeObjectPropList(b); err == nil {
+			t.Errorf("% x: expected an error", b)
+		}
+	}
+}

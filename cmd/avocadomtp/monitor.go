@@ -42,9 +42,9 @@ func renderState(st activity.State) string {
 	fmt.Fprintf(&b, "AvocadoMTP · %s\n\n", time.Now().Format("15:04:05"))
 	switch {
 	case st.Connected && st.Device != nil:
-		fmt.Fprintf(&b, "Phone:   %s %s\n", st.Device.Manufacturer, st.Device.Model)
+		fmt.Fprintf(&b, "Phone:   %s %s\n", printable(st.Device.Manufacturer), printable(st.Device.Model))
 	case st.Error != "":
-		fmt.Fprintf(&b, "Phone:   not connected (%s)\n", st.Error)
+		fmt.Fprintf(&b, "Phone:   not connected (%s)\n", printable(st.Error))
 	default:
 		fmt.Fprintf(&b, "Phone:   not connected\n")
 	}
@@ -71,7 +71,7 @@ func renderState(st activity.State) string {
 		if t.State != "active" {
 			state = t.State
 			if t.Error != "" {
-				state += ": " + t.Error
+				state += ": " + printable(t.Error)
 			}
 		}
 		fmt.Fprintf(&b, "  %s %s%-40s %9s  %s\n", arrow, pct, truncate(t.Path, 40), human(t.Bytes), state)

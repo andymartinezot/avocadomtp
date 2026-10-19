@@ -158,6 +158,11 @@ func (m *Manager) mount(r remote.Remote, st *vfs.Storage) (*mounted, error) {
 
 func (m *Manager) mountAt(r remote.Remote, st *vfs.Storage, root string, options []string) (*mounted, error) {
 	dir := filepath.Join(root, st.Name)
+	// vfs already refuses unusable names; never mount anywhere but directly
+	// inside the root, whatever the device calls its storage.
+	if !vfs.ValidName(st.Name) || filepath.Dir(dir) != filepath.Clean(root) {
+		return nil, fmt.Errorf("refusing to mount storage %q outside %s", st.Name, root)
+	}
 	local := !strings.HasPrefix(dir, "/Volumes/")
 	if local {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -172,7 +177,8 @@ func (m *Manager) mountAt(r remote.Remote, st *vfs.Storage, root string, options
 	fs.Activity = m.Activity
 	host := fuse.NewFileSystemHost(fs)
 	host.SetCapCaseInsensitive(false)
-	opts := []string{"-o", "volname=" + st.Name}
+	// FUSE splits options on commas: keep the device's name from adding any.
+	opts := []string{"-o", "volname=" + strings.ReplaceAll(st.Name, ",", " ")}
 	for _, o := range options {
 		opts = append(opts, "-o", o)
 	}
