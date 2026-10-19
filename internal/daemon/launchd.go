@@ -64,9 +64,10 @@ func State() AgentState {
 	return st
 }
 
-// Install copies exe to InstalledBinary, writes the LaunchAgent and starts it.
-// The start-at-login preference is left as the user set it (default: on).
-func Install(exe string) (string, error) {
+// Install copies exe to InstalledBinary, writes the LaunchAgent and, if start
+// is set, starts it. The start-at-login preference is left as the user set it
+// (default: on).
+func Install(exe string, start bool) (string, error) {
 	removeLegacy()
 	_ = Stop() // the running daemon holds the old binary
 	bin, err := copyBinary(exe, InstalledBinary())
@@ -97,6 +98,9 @@ func Install(exe string) (string, error) {
 	}
 	if err := os.WriteFile(p, []byte(plist), 0o644); err != nil {
 		return "", err
+	}
+	if !start {
+		return p, nil
 	}
 	return p, Start()
 }
@@ -178,6 +182,28 @@ func Uninstall() error {
 	_ = os.Remove(appSupport) // only if empty: never delete files we don't know
 	_ = os.RemoveAll(CacheDir())
 	_ = os.Remove(LogPath())
+	return removeCLILink(CLILink, InstalledBinary())
+}
+
+// CLILink is where the menu bar app's "Install command-line tool…" puts a
+// symlink to InstalledBinary.
+const CLILink = "/usr/local/bin/avocadomtp"
+
+// removeCLILink deletes link only if it is a symlink to target, so another
+// tool's avocadomtp is never touched. /usr/local/bin is usually root-owned,
+// so it falls back to the macOS administrator prompt.
+func removeCLILink(link, target string) error {
+	if dest, err := os.Readlink(link); err != nil || dest != target {
+		return nil
+	}
+	err := os.Remove(link)
+	if err == nil || !os.IsPermission(err) {
+		return err
+	}
+	script := fmt.Sprintf(`do shell script "rm -f '%s'" with administrator privileges`, link)
+	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+		return fmt.Errorf("remove %s: %v: %s", link, err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

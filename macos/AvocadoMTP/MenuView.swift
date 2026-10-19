@@ -8,7 +8,12 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             Divider()
-            if !model.installed {
+            if model.settingUp {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Setting up the AvocadoMTP service…")
+                }
+            } else if !model.installed {
                 notInstalled
             } else if !model.serviceRunning {
                 Label("The service is stopped. Turn it on to see your phone.", systemImage: "pause.circle")
@@ -18,6 +23,7 @@ struct MenuView: View {
                 if !st.mounts.isEmpty || st.connected { volumes(st) }
                 if !st.transfers.isEmpty { transfers(st) }
             }
+            if !model.settingUp && model.installed { checklist }
             if let msg = model.message {
                 Label(msg, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -29,6 +35,7 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 340)
+        .onAppear { model.menuOpened() }
     }
 
     // MARK: Sections
@@ -52,9 +59,38 @@ struct MenuView: View {
     private var notInstalled: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("The service isn't installed yet.", systemImage: "wrench.and.screwdriver")
-            Text("Run `avocadomtp daemon install` once in Terminal.")
+            if model.canInstallService {
+                Button("Set up the service") { model.useBundledService() }
+            } else {
+                Text("Run `avocadomtp daemon install` once in Terminal.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Shown only when something is missing; empty when all is well.
+    @ViewBuilder private var checklist: some View {
+        if model.volumes == .unavailable {
+            setupRow("Finder volumes need FUSE-T (free).", icon: "externaldrive.badge.xmark",
+                     action: "Get FUSE-T", model.openFUSETDownload)
+        } else if model.volumes == .nfs {
+            setupRow("Turn on fuse-t in File System Extensions for faster volumes.", icon: "bolt",
+                     action: "Open Settings", model.openExtensionsSettings)
+        }
+        if model.devServiceInstalled && model.canInstallService {
+            setupRow("A developer build of the service is installed.", icon: "hammer",
+                     action: "Use this app's version", model.useBundledService)
+        }
+    }
+
+    private func setupRow(_ text: String, icon: String, action: String, _ run: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(text, systemImage: icon)
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action, action: run)
+                .controlSize(.small)
         }
     }
 
@@ -187,6 +223,11 @@ struct MenuView: View {
             .help("Start the service and this menu when you log in")
             HStack {
                 Button("Show log") { model.openLog() }
+                if !model.cliOnPath && model.installed {
+                    Button("Install command-line tool…") { model.installCLI() }
+                        .help("Adds avocadomtp to /usr/local/bin (asks for your password)")
+                        .disabled(model.busy)
+                }
                 Spacer()
                 Button("Quit menu") { NSApp.terminate(nil) }
                     .help("Quit this menu; the service keeps running")

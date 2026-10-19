@@ -141,12 +141,22 @@ enum ServiceControl {
         return home + "/Library/Application Support/AvocadoMTP/bin/avocadomtp"
     }
 
+    /// The avocadomtp bundled in the app by scripts/build-app.sh. Xcode builds
+    /// without it rely on a separately installed service, as before.
+    static var helper: String? {
+        let p = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/avocadomtp").path
+        return FileManager.default.isExecutableFile(atPath: p) ? p : nil
+    }
+
+    /// Where "Install command-line tool…" links the CLI (daemon.CLILink).
+    static let cliLink = "/usr/local/bin/avocadomtp"
+
     static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: binary) }
 
     @discardableResult
-    static func run(_ args: [String]) throws -> String {
+    static func run(_ args: [String], executable: String = binary) throws -> String {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: binary)
+        p.executableURL = URL(fileURLWithPath: executable)
         p.arguments = args
         let out = Pipe()
         p.standardOutput = out
@@ -161,9 +171,98 @@ enum ServiceControl {
         return text
     }
 
-    /// Reads "autostart: on|off" from `avocadomtp daemon status`.
-    static func autostart() -> Bool {
-        guard let out = try? run(["daemon", "status"]) else { return true }
-        return !out.contains("autostart: off")
+    /// The version an avocadomtp binary reports: "1.2.3", "dev" for a plain
+    /// go build, nil for builds from before the version command.
+    static func version(of path: String) -> String? {
+        guard let out = try? run(["version"], executable: path) else { return nil }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// What the app should do with the installed service on launch.
+    enum Setup: Equatable {
+        case none           // up to date, or no helper to install from
+        case install        // no service yet
+        case update         // the helper is newer than the installed service
+        case devInstalled   // a developer build is installed: never replaced on its own
+    }
+
+    static func setupNeeded(installed: Bool, installedVersion: String?, helperVersion: String?) -> Setup {
+        guard let helperVersion, helperVersion != "dev" else { return .none }
+        guard installed else { return .install }
+        guard let installedVersion else { return .update } // predates `version`
+        if installedVersion == "dev" { return .devInstalled }
+        return isOlder(installedVersion, than: helperVersion) ? .update : .none
+    }
+
+    /// Compares dotted versions numerically ("0.10.0" > "0.9.1"); anything after
+    /// the digits of a part ("1-rc1") is ignored.
+    static func isOlder(_ a: String, than b: String) -> Bool {
+        func parts(_ v: String) -> [Int] {
+            v.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+        }
+        let x = parts(a), y = parts(b)
+        for i in 0..<max(x.count, y.count) {
+            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
+            if l != r { return l < r }
+        }
+        return false
+    }
+
+    /// Installs or updates the service from the bundled helper. A stopped
+    /// service stays stopped; autostart is launchd's switch and survives.
+    static func installFromHelper(start: Bool) throws {
+        guard let helper else { return }
+        try run(["daemon", "install"] + (start ? [] : ["--no-start"]), executable: helper)
+    }
+
+    /// The parts of `avocadomtp daemon status` the menu uses.
+    struct Status: Equatable {
+        enum Volumes: Equatable { case fskit, nfs, unavailable, unknown }
+        var running = false
+        var autostart = true
+        var volumes = Volumes.unknown
+    }
+
+    static func status() -> Status {
+        guard let out = try? run(["daemon", "status"]) else { return Status() }
+        return parseStatus(out)
+    }
+
+    static func parseStatus(_ out: String) -> Status {
+        var st = Status()
+        for line in out.split(separator: "\n") {
+            if line.hasPrefix("daemon:") {
+                st.running = line.contains("running")
+            } else if line.hasPrefix("autostart:") {
+                st.autostart = !line.contains("off")
+            } else if line.hasPrefix("volumes:") {
+                st.volumes = line.contains("fskit") ? .fskit
+                    : line.contains("nfs") ? .nfs
+                    : line.contains("unavailable") ? .unavailable : .unknown
+            }
+        }
+        return st
+    }
+
+    /// True when some avocadomtp is already on the usual PATH (ours or not).
+    static var cliOnPath: Bool {
+        [cliLink, "/opt/homebrew/bin/avocadomtp"].contains {
+            FileManager.default.fileExists(atPath: $0)
+        }
+    }
+
+    /// Links /usr/local/bin/avocadomtp to the service's binary, asking for an
+    /// administrator password (the folder is root-owned).
+    static func installCLI() throws {
+        func sh(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let command = "mkdir -p /usr/local/bin && ln -sf \(sh(binary)) \(sh(cliLink))"
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        do {
+            try run(["-e", "do shell script \"\(escaped)\" with administrator privileges"],
+                    executable: "/usr/bin/osascript")
+        } catch DaemonError.daemon(let text) where text.contains("-128") {
+            return // the user cancelled the password prompt
+        }
     }
 }

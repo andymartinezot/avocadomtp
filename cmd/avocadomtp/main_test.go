@@ -41,3 +41,19 @@ func TestResolve(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestVolumesLine(t *testing.T) {
+	cases := []struct {
+		fuseT, fskit bool
+		want         string
+	}{
+		{false, false, "volumes:   unavailable (FUSE-T not installed)"},
+		{true, true, "volumes:   fskit"},
+		{true, false, "volumes:   nfs (enable fuse-t in File System Extensions for local disks)"},
+	}
+	for _, c := range cases {
+		if got := volumesLine(c.fuseT, c.fskit); got != c.want {
+			t.Errorf("volumesLine(%v, %v) = %q, want %q", c.fuseT, c.fskit, got, c.want)
+		}
+	}
+}
