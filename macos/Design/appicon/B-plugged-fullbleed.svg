@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Concept B, full-bleed (the app icon source): macOS applies the rounded shape itself. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf8ec"/><stop offset="1" stop-color="#dcebc6"/></linearGradient>
+    <linearGradient id="skin" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" stop-color="#55893a"/><stop offset="1" stop-color="#1d3a15"/></linearGradient>
+    <radialGradient id="flesh" cx="0.45" cy="0.6" r="0.65"><stop offset="0" stop-color="#f6f9cc"/><stop offset="0.55" stop-color="#d9ea8c"/><stop offset="1" stop-color="#99bf4c"/></radialGradient>
+    <radialGradient id="pit" cx="0.36" cy="0.3" r="0.8"><stop offset="0" stop-color="#b9824d"/><stop offset="0.55" stop-color="#7c4c26"/><stop offset="1" stop-color="#4a2c13"/></radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f2f2f2"/><stop offset="1" stop-color="#9c9c9c"/></linearGradient>
+    <linearGradient id="housing" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b3b3b"/><stop offset="0.45" stop-color="#555"/><stop offset="1" stop-color="#262626"/></linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2.6" stdDeviation="3.2" flood-color="#1d3a15" flood-opacity="0.3"/></filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(172 120) scale(6.8)">
+    <g filter="url(#shadow)"><path d="M50,4 C60,4 66,14 68,26 C70,38 78,46 84,58 C92,74 88,100 70,108 C60,112 40,112 30,108 C12,100 8,74 16,58 C22,46 30,38 32,26 C34,14 40,4 50,4 Z" fill="url(#skin)"/>
+    <path d="M50,4 C60,4 66,14 68,26 C70,38 78,46 84,58 C92,74 88,100 70,108 C60,112 40,112 30,108 C12,100 8,74 16,58 C22,46 30,38 32,26 C34,14 40,4 50,4 Z" transform="translate(50 64) scale(0.84) translate(-50 -64)" fill="url(#flesh)"/>
+    <circle cx="50" cy="74" r="18" fill="url(#pit)"/>
+    <ellipse cx="43.5" cy="66.5" rx="6.5" ry="3.6" fill="#fff" opacity="0.2"/></g>
+    <path d="M60,140 C60,118 50,110 50,94" fill="none" stroke="#2c2c2c" stroke-width="5.2" stroke-linecap="round"/>
+    <rect x="45" y="68.5" width="10" height="10" rx="2.6" fill="url(#metal)"/>
+    <rect x="43" y="77" width="14" height="18" rx="3.8" fill="url(#housing)"/>
+    <rect x="44.6" y="78.6" width="3" height="14" rx="1.5" fill="#fff" opacity="0.14"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+  <!-- Concept A, connected: the USB-C port is filled (plugged in). -->
+  <g transform="translate(1.4 0.5) scale(0.152)" fill="none" stroke="#000" stroke-width="9.9" stroke-linejoin="round">
+    <path d="M50,4 C60,4 66,14 68,26 C70,38 78,46 84,58 C92,74 88,100 70,108 C60,112 40,112 30,108 C12,100 8,74 16,58 C22,46 30,38 32,26 C34,14 40,4 50,4 Z"/>
+  </g>
+  <rect x="5.1" y="9.85" width="7.8" height="3.8" rx="1.9" fill="#000"/>
+</svg>
