@@ -32,7 +32,9 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 
 ## Quick start
 
-Needs macOS and [Homebrew](https://brew.sh). Pick one:
+Needs macOS and [Homebrew](https://brew.sh). Options A and B install the service, the Finder volumes
+and the CLI. The menu bar app needs option C for now: a downloadable build that doesn't need Xcode is
+on the [roadmap](#roadmap).
 
 **Option A: one command.** Installs the dependencies, builds, and starts the service. It clones the
 repository into `~/avocadomtp` (or runs from your clone with `./install.sh`). Run it again to update.
@@ -49,6 +51,17 @@ brew install go libusb            # build dependencies
 brew install --cask fuse-t        # Finder volumes (free, no kernel extension)
 go build -o bin/avocadomtp ./cmd/avocadomtp
 ./bin/avocadomtp daemon install      # start at login; mounts the phone in Finder
+```
+
+**Option C: with the menu bar app.** Needs Xcode (a free Apple account is enough, or none at all:
+the build is ad-hoc signed). The app carries the service inside and sets it up on first launch, so
+there's no `daemon install` step:
+
+```sh
+git clone https://github.com/andymartinezot/avocadomtp.git && cd avocadomtp
+brew install go libusb xcodegen && brew install --cask fuse-t
+scripts/build-app.sh
+cp -R macos/build/Build/Products/Release/AvocadoMTP.app /Applications/ && open /Applications/AvocadoMTP.app
 ```
 
 Then:
@@ -318,7 +331,7 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 | Install command-line tool… | links `avocadomtp` into `/usr/local/bin` (asks for your password once) |
 
 It holds a single `watch` connection: snapshots arrive when something changes, so the app uses no CPU
-while idle (≈14 MB of memory).
+while idle (≈50 MB resident; the service itself ≈10 MB).
 
 The app is self-contained: `avocadomtp` is inside it (`Contents/Helpers`, with libusb linked in), and
 on launch it installs the background service, or updates it when the app is newer. A stopped service
@@ -381,7 +394,7 @@ docs/index.html       interactive architecture & performance page
 | Symptom | Fix |
 |---|---|
 | `no MTP device found` | Unlock the phone, use a data cable, choose **File transfer** in the USB notification |
-| `claim MTP interface: LIBUSB_ERROR_ACCESS` | Another app holds the phone (the daemon, Android File Transfer, OpenMTP, MacDroid) |
+| `claim MTP interface: LIBUSB_ERROR_ACCESS` (or `_OTHER`) | Another app holds the phone (the daemon, Android File Transfer, OpenMTP, MacDroid). macOS's own `ptpcamerad` is stopped automatically |
 | `… is not responding` | Unplug and reconnect, or toggle the phone's USB mode |
 | Volumes appear under a "fuse-t" server | Enable fuse-t in File System Extensions (see Quick start) |
 | Daemon doesn't start after a rebuild | Run `avocadomtp daemon install` again (it copies the new binary) |
@@ -398,5 +411,8 @@ docs/index.html       interactive architecture & performance page
 - [x] Daemon API for the menu bar: `watch` event stream, mounts, eject / mount
 - [x] Menu bar app (SwiftUI): mounts, paths, live transfers and speed, eject, on/off, start at login
 - [x] App and menu bar icons (sources and previews in `macos/Design/`)
-- [ ] Bundle the daemon inside the app
-- [ ] Distribution: Homebrew tap, then a signed `.app` in a DMG
+- [x] One-command install script (`install.sh`)
+- [x] Self-contained app: the service inside, set up and updated on launch, no Apple account needed to build
+- [ ] Release builds on GitHub: download the app without Xcode
+- [ ] `install.sh` installs the downloaded app (no Go, Xcode or libusb needed)
+- [ ] Homebrew cask

@@ -274,11 +274,16 @@ and a small background daemon mounts each phone storage as its own disk through 
 </div>
 
 <h2>Quick start</h2>
-<div class="card"><pre>brew install go libusb
-brew install --cask fuse-t
-go build -o bin/avocadomtp ./cmd/avocadomtp
-./bin/avocadomtp daemon install     # starts at login, mounts the phone in Finder</pre>
-<p class="sub" style="margin:12px 0 0">Then turn on <b>System Settings → General → Login Items &amp; Extensions → File System Extensions → fuse-t</b>, unlock the phone and choose <b>File transfer</b>.</p></div>
+<p class="sub">Needs macOS and Homebrew. A downloadable app that needs no Xcode is next on the roadmap.</p>
+<div class="card"><h3>Service, Finder volumes and CLI: one command</h3><pre>curl -fsSL https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/install.sh | bash</pre>
+<p class="sub" style="margin:8px 0 0">Installs go, libusb and FUSE-T, builds, and starts the service. Run it again to update.</p></div>
+<div class="card" style="margin-top:12px"><h3>With the menu bar app (needs Xcode)</h3><pre>git clone https://github.com/andymartinezot/avocadomtp.git &amp;&amp; cd avocadomtp
+brew install go libusb xcodegen &amp;&amp; brew install --cask fuse-t
+scripts/build-app.sh                # ad-hoc signed, no Apple account needed
+cp -R macos/build/Build/Products/Release/AvocadoMTP.app /Applications/
+open /Applications/AvocadoMTP.app   # sets up the service on first launch</pre>
+<p class="sub" style="margin:8px 0 0">The app carries the service inside, updates it when the app is newer, and shows what's missing (FUSE-T, the FSKit toggle).</p></div>
+<p class="sub" style="margin:12px 0 0">Then turn on <b>System Settings → General → Login Items &amp; Extensions → File System Extensions → fuse-t</b>, unlock the phone and choose <b>File transfer</b>.</p>
 
 <footer>AvocadoMTP · <a href="https://github.com/andymartinezot/avocadomtp">source on GitHub</a></footer>
 </div>
