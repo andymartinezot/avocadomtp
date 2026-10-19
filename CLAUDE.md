@@ -13,6 +13,11 @@ gofmt -l . && go vet ./...                # must be clean before committing
 ./bin/avocadomtp daemon install              # (re)install the LaunchAgent with the fresh binary
 tail -f ~/Library/Logs/avocadomtp.log        # daemon log
 AVOCADOMTP_FUSE_DEBUG=1 ./bin/avocadomtp daemon # foreground daemon tracing every FUSE call
+./bin/avocadomtp watch                   # live activity stream (what the menu bar shows)
+
+# menu bar app (Swift 5 mode, macOS 14+, not sandboxed)
+cd macos && xcodegen generate && xcodebuild -project AvocadoMTP.xcodeproj -scheme AvocadoMTP \
+  -configuration Release -derivedDataPath build -allowProvisioningUpdates build
 ```
 
 After changing daemon or fusefs code, the running LaunchAgent still uses the old binary:
@@ -39,7 +44,8 @@ CLI ─ Unix socket (internal/daemon) ──────────────
 | `internal/errcode` | MTP/USB errors → POSIX errno (shared by daemon and fusefs) |
 | `internal/bufpool` | pooled transfer buffers |
 | `internal/activity` | hub of phone/mount/transfer state; `watch` snapshots for the menu bar (idle: no ticks) |
-| `cmd/avocadomtp` | CLI, shell, `daemon` subcommands |
+| `cmd/avocadomtp` | CLI, shell, `daemon` subcommands, `watch`/`eject`/`mount` |
+| `macos/` | SwiftUI menu bar app: one `watch` stream for state, the CLI for service control, socket ops for eject/mount |
 
 ## Invariants: don't break these
 
