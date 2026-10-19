@@ -1,8 +1,29 @@
-# CLAUDE.md
+# CLAUDE.md — AvocadoMTP
 
-AvocadoMTP: Android ↔ macOS file transfer over USB. A user-space MTP stack (Go + cgo/libusb),
-a daemon that owns the USB session, Finder volumes through FUSE-T, and a CLI.
-User-facing docs: `README.md`; interactive architecture/perf page: `docs/index.html`.
+Android ↔ macOS file transfer over USB. A user-space MTP stack (Go + cgo/libusb), a daemon that owns
+the USB session, Finder volumes through FUSE-T, a CLI, and a SwiftUI menu bar app.
+Single repo, public: `github.com/andymartinezot/avocadomtp`. User docs: `README.md`; interactive
+architecture/perf page: `docs/index.html`.
+
+This file is the map. Harness (adapted from devops-harness, D-015): behavior rules in `.claude/rules/`,
+skills in `.claude/skills/`. **Start of session: `/resume-handoff`. End of session or workstream:
+`/handoff`.**
+
+## Where state lives (one source of truth per fact)
+
+| What | Where |
+|---|---|
+| Right now: component state, next steps, open threads | `STATUS.md` |
+| Decisions (why, alternatives) | `DECISIONS.md` index → `docs/decisions/NNNN-*.md` |
+| Risky changes (SDD) | `specs/NNN-<slug>/` — `spec.md` (the only place Status lives), `plan.md`, `task.md`; template `specs/_template/` |
+| Session narratives | `docs/sessions/<date>-<role>-<slug>.md` (local only, gitignored) |
+| Durable cross-session memory | `memory/` (local only, gitignored; index `memory/MEMORY.md` auto-injected). Policy: `.claude/rules/memory-policy.md` |
+| How the code works, commands, invariants | this file + package doc comments |
+| External tools (GitHub, Xcode, FUSE-T) | `.claude/rules/integrations.md` |
+
+Rules that always apply: `orchestrator.md` (delegation, output contract, writing state down),
+`device-safety.md` (the phone is the user's real data; the installed service is the user's setup),
+`git-conventions.md`, `secrets-handling.md` (public repo), `memory-policy.md`.
 
 ## Commands
 
@@ -79,8 +100,8 @@ CLI ─ Unix socket (internal/daemon) ──────────────
   reproduce kernel/FUSE-T call patterns (use `AVOCADOMTP_FUSE_DEBUG=1` to see them).
 - Keep resource use low: pool large buffers (`bufpool`), avoid per-request allocations on hot
   paths, and measure before/after with real transfers (`avocadomtp daemon status` shows counters).
-- Commits: no AI/Claude attribution lines. Push via the `github.com-ot` SSH alias
-  (`origin` = `git@github.com-ot:andymartinezot/avocadomcp.git`).
+- Commits and pushes follow `.claude/rules/git-conventions.md` (commit only when asked, no AI
+  attribution, push via the `github.com-ot` alias after the user's OK).
 
 ## Gotchas
 
@@ -92,3 +113,28 @@ CLI ─ Unix socket (internal/daemon) ──────────────
 - A native FSKit extension (Swift) needs a **paid** Apple Developer account; personal teams lack
   the FSKit Module capability. That's why FUSE-T is used.
 - Some phones stop answering MTP after idle periods; recovery is in `device.open`.
+
+---
+
+## Routing — main is the orchestrator
+
+> **If you are running as a named agent** (`device-inspector-agent` or a domain agent), **skip this
+> section** and follow your agent definition.
+
+How to orchestrate (delegate by default, delegation prompt, output contract, verify claims, write
+state down) is in `.claude/rules/orchestrator.md`. This section holds only this project's facts.
+
+| Path / topic | Owner |
+|---|---|
+| Read-only checks on the Mac and phone: service, log, mounts, USB, listings; evidence for specs | `device-inspector-agent` |
+| Code (`internal/`, `cmd/`, `macos/`), docs, specs, commits | main |
+
+Add a row per domain agent when one is created from `.claude/templates/domain-agent.md`, once the
+routing need recurs (likely splits: a Go core owner for `internal/`+`cmd/`, a macOS app owner for `macos/`).
+
+**Spec first** for: the phone write path, the socket protocol / activity snapshot shape (Go and Swift
+change together), service install/control, distribution and signing — see `orchestrator.md`.
+
+**Delegation warnings:** anything that writes to the phone stays inside `/<storage>/avocadomtp-test`;
+never `rm -r` under `~/AvocadoMTP` (mounted phone storage).
+
