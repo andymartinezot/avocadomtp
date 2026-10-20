@@ -19,6 +19,7 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 ## Contents
 
 - [Quick start](#quick-start)
+- [Demo](#demo)
 - [How it works](#how-it-works)
 - [Transfer flows](#transfer-flows)
 - [Performance dashboard](#performance-dashboard)
@@ -55,6 +56,19 @@ Security → Open Anyway**.
 > signed (no paid Apple certificate). The installer downloads over HTTPS only and checks the sha256
 > published with the release, which catches corrupted downloads; the trust root is GitHub and this
 > repository. Prefer to check first? Read [`install.sh`](install.sh), or build from source below.
+
+---
+
+## Demo
+
+Plugging the phone in: macOS asks once to allow the USB accessory, the menu bar picks the device up,
+and each storage mounts as its own Finder volume.
+
+![AvocadoMTP detecting a phone and mounting its storages](https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/docs/avocadomtp-demo.gif)
+
+▶ **[Watch the full 44-second install](https://github.com/andymartinezot/avocadomtp/blob/main/docs/avocadomtp-demo.mp4)** — the one-command install, enabling the FUSE-T FSKit
+extension in System Settings, the menu bar app, and the phone connecting. Recorded on macOS 26
+(Apple Silicon) with a Retroid Pocket 6.
 
 <details>
 <summary><b>Other ways: from source, or building the app yourself</b></summary>
