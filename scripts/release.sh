@@ -9,10 +9,12 @@
 #
 # First set MARKETING_VERSION in macos/project.yml to the new version and commit it.
 # With gh installed, the script follows the build and prints the release.
+# RELEASE_REMOTE names the git remote of the GitHub repository (default origin).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO=andymartinezot/avocadomtp
+remote="${RELEASE_REMOTE:-origin}"
 
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -30,18 +32,15 @@ done
 tag="v$version"
 
 echo "Checking release $tag"
-branch="$(git rev-parse --abbrev-ref HEAD)"
-[[ "$branch" == main ]] || fail "on branch $branch; releases are tagged on main"
-ok "on main"
 git diff --quiet && git diff --cached --quiet || fail "uncommitted changes to tracked files"
 ok "no uncommitted changes"
-git fetch --quiet origin main --tags
-[[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || fail "main differs from origin/main: push or pull first"
-ok "in sync with origin/main"
+git fetch --quiet "$remote" main --tags
+[[ "$(git rev-parse HEAD)" == "$(git rev-parse "$remote/main")" ]] || fail "HEAD differs from $remote/main: releases are tagged on main; push or pull first"
+ok "at $remote/main"
 current="$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' macos/project.yml)"
 [[ "$current" == "$version" ]] || fail "macos/project.yml has MARKETING_VERSION $current; set it to $version and commit first"
 ok "MARKETING_VERSION is $version"
-if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [[ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]]; then
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null || [[ -n "$(git ls-remote --tags "$remote" "refs/tags/$tag")" ]]; then
   fail "tag $tag already exists"
 fi
 ok "tag $tag is new"
@@ -60,7 +59,7 @@ if [[ $yes == 0 ]]; then
 fi
 
 git tag -a "$tag" -m "AvocadoMTP $version"
-git push --quiet origin "$tag"
+git push --quiet "$remote" "$tag"
 ok "pushed $tag; GitHub Actions is building the release"
 
 if ! command -v gh >/dev/null; then
