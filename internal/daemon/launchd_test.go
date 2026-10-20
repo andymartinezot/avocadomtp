@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRemoveCLILink(t *testing.T) {
@@ -69,5 +70,41 @@ func TestRemoveDirIfOurs(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(kept, name)); err != nil {
 			t.Errorf("%s should be kept: %v", name, err)
 		}
+	}
+}
+
+func TestNoHomeRefusesToTouchFiles(t *testing.T) {
+	for _, h := range []string{"", "relative/home"} {
+		t.Setenv("HOME", h)
+		if err := Uninstall(); err == nil {
+			t.Errorf("HOME=%q: Uninstall should refuse", h)
+		}
+		if _, err := Install("/nonexistent", false); err == nil {
+			t.Errorf("HOME=%q: Install should refuse", h)
+		}
+	}
+}
+
+func TestStaleAutostartMarker(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if staleMarker() {
+		t.Fatal("no marker is not stale")
+	}
+	m := autostartMarker()
+	if err := os.MkdirAll(filepath.Dir(m), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if staleMarker() {
+		t.Error("a fresh marker belongs to a Start in progress")
+	}
+	old := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(m, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !staleMarker() {
+		t.Error("an old marker is left by an interrupted Start")
 	}
 }

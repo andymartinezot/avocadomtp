@@ -32,6 +32,10 @@ done
 tag="v$version"
 
 echo "Checking release $tag"
+[[ "$remote" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "RELEASE_REMOTE '$remote' isn't a remote name"
+url="$(git remote get-url -- "$remote")" || fail "no git remote $remote"
+[[ "$url" =~ [:/]$REPO(\.git)?$ ]] || fail "$remote is $url, not $REPO: set RELEASE_REMOTE to the remote of $REPO"
+ok "remote $remote is $REPO"
 git diff --quiet && git diff --cached --quiet || fail "uncommitted changes to tracked files"
 ok "no uncommitted changes"
 git fetch --quiet "$remote" main --tags
