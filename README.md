@@ -27,6 +27,7 @@ from the terminal. No SD-card swapping, no kernel extensions, no paid apps.
 - [Finder volumes](#finder-volumes)
 - [Project layout](#project-layout)
 - [Releasing](#releasing)
+- [Uninstall](#uninstall)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 
@@ -332,13 +333,7 @@ avocadomtp daemon uninstall          # stop and remove the service (agent, binar
 avocadomtp daemon [--no-mount]       # run in the foreground instead (debugging)
 ```
 
-### Uninstall everything
-
-```sh
-avocadomtp uninstall                 # the service + the menu bar app (login item, preferences, bundle, CLI link)
-```
-
-Your phone's files are never touched. FUSE-T, libusb and Go stay installed (Homebrew removes them).
+To remove everything (the service and the menu bar app), see [Uninstall](#uninstall).
 
 launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 `autostart off` uses launchd's persistent enable/disable switch, so it survives reboots.
@@ -434,6 +429,28 @@ laptop:
 
 Every push to `main` runs the same build and tests without publishing. Users update by running the
 install command again; the new app then updates the service on its first launch.
+
+## Uninstall
+
+One command removes everything AvocadoMTP put on your Mac: the background service (LaunchAgent,
+its binary, socket, cache and log), the menu bar app (login item, preferences and
+`/Applications/AvocadoMTP.app`) and the `avocadomtp` command-line link. Your phone's files are never
+touched.
+
+```sh
+/Applications/AvocadoMTP.app/Contents/Helpers/avocadomtp uninstall
+```
+
+If you installed the command-line tool, `avocadomtp uninstall` does the same. If you built from
+source and never installed the app, run `./bin/avocadomtp uninstall` from the clone, then delete the
+clone. Removing the command-line link may ask for your administrator password.
+
+The prerequisites stay installed, since other apps may use them. If nothing else needs them:
+
+```sh
+brew uninstall --cask fuse-t   # Finder volumes (FUSE-T)
+brew uninstall libusb go       # only installed for source builds
+```
 
 ## Troubleshooting
 
