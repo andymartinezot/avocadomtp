@@ -131,6 +131,9 @@ func runDaemon(serial, socket string, mount bool) error {
 	}
 	logger := log.New(logWriter{os.Stderr}, "avocadomtp: ", log.LstdFlags)
 	logger.Printf("listening on %s", socket)
+	if os.Getenv("XPC_SERVICE_NAME") == daemon.Label {
+		daemon.RestoreAutostart() // up now: Start's temporary enable can go
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	hub := activity.NewHub()

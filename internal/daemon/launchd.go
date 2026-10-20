@@ -23,6 +23,15 @@ func home() string {
 	return h
 }
 
+// checkHome refuses to touch files when the home folder is unknown: every
+// path below would be relative to the current directory.
+func checkHome() error {
+	if h, err := os.UserHomeDir(); err != nil || !filepath.IsAbs(h) {
+		return fmt.Errorf("no usable home folder (HOME=%q)", h)
+	}
+	return nil
+}
+
 func agentPath() string { return filepath.Join(home(), "Library", "LaunchAgents", Label+".plist") }
 
 // LogPath is where the LaunchAgent writes the daemon's log.
@@ -50,7 +59,7 @@ type AgentState struct {
 // State reports whether the agent is installed, loaded, running and set to
 // start at login.
 func State() AgentState {
-	st := AgentState{Autostart: autostartEnabled()}
+	st := AgentState{Autostart: autostartEnabled() && !exists(autostartMarker())}
 	if _, err := os.Stat(agentPath()); err == nil {
 		st.Installed = true
 	}
@@ -72,6 +81,9 @@ func State() AgentState {
 // is set, starts it. The start-at-login preference is left as the user set it
 // (default: on).
 func Install(exe string, start bool) (string, error) {
+	if err := checkHome(); err != nil {
+		return "", err
+	}
 	removeLegacy()
 	_ = Stop() // the running daemon holds the old binary
 	bin, err := copyBinary(exe, InstalledBinary())
@@ -117,12 +129,17 @@ func Start() error {
 	if State().Running {
 		return nil
 	}
-	if !autostartEnabled() {
+	if !autostartEnabled() || staleMarker() {
 		// A disabled service can't be loaded or started: enable it just for this
-		// start. The override is restored only once the daemon is up, because
-		// disabling it any earlier cancels the spawn launchd has merely queued.
+		// start. The override is restored only once the daemon is up (the daemon
+		// does it itself, see RestoreAutostart), because disabling it any earlier
+		// cancels the spawn launchd has merely queued. A marker older than any
+		// Start is left by one that was interrupted: autostart is really off.
+		if err := os.WriteFile(autostartMarker(), nil, 0o600); err != nil {
+			return fmt.Errorf("start: %w", err)
+		}
 		_ = launchctl("enable", service())
-		defer launchctl("disable", service())
+		defer RestoreAutostart()
 	}
 	var err error
 	for i := 0; i < 20; i++ { // launchd may still be tearing down a previous instance
@@ -172,9 +189,37 @@ func Stop() error {
 	return fmt.Errorf("the daemon did not stop within 20 s")
 }
 
+// autostartMarker exists while the "enabled" override is Start's, not the
+// user's: Start enables a service whose autostart is off for one start only.
+func autostartMarker() string {
+	return filepath.Join(filepath.Dir(filepath.Dir(InstalledBinary())), "autostart-off")
+}
+
+// staleMarker reports a marker left by a Start that never finished (Start
+// waits about 20 s at most).
+func staleMarker() bool {
+	fi, err := os.Stat(autostartMarker())
+	return err == nil && time.Since(fi.ModTime()) > time.Minute
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// RestoreAutostart turns autostart back off after Start enabled it for one
+// start. The daemon calls it once it is running, so the user's setting comes
+// back even if Start was interrupted (Ctrl-C, the app's helper killed).
+func RestoreAutostart() {
+	if os.Remove(autostartMarker()) == nil {
+		_ = launchctl("disable", service())
+	}
+}
+
 // SetAutostart chooses whether the daemon starts at login. It doesn't start or
-// stop the daemon now.
+// stop the daemon now. The user's choice wins over a Start in progress.
 func SetAutostart(on bool) error {
+	_ = os.Remove(autostartMarker())
 	if on {
 		return launchctl("enable", service())
 	}
@@ -198,6 +243,9 @@ func autostartEnabled() bool {
 // Uninstall stops the daemon and removes everything the service installed:
 // the agent, its binary, the socket, the write-staging cache and the log.
 func Uninstall() error {
+	if err := checkHome(); err != nil {
+		return err
+	}
 	_ = Stop()
 	_ = launchctl("enable", service()) // drop our autostart override
 	if err := os.Remove(agentPath()); err != nil && !os.IsNotExist(err) {
@@ -207,6 +255,7 @@ func Uninstall() error {
 	_ = os.Remove(InstalledBinary())
 	_ = os.Remove(filepath.Dir(InstalledBinary()))
 	_ = os.Remove(filepath.Join(appSupport, "avocadomtp.sock"))
+	_ = os.Remove(autostartMarker())
 	_ = removeDirIfOurs(appSupport)
 	_ = os.RemoveAll(CacheDir())
 	_ = os.Remove(LogPath())
@@ -267,17 +316,28 @@ const AppPath = "/Applications/AvocadoMTP.app"
 // AppBundleID is the menu bar app's bundle identifier (its preferences domain).
 const AppBundleID = "com.andymartinezot.avocadomtp.menubar"
 
-// UninstallApp removes the menu bar app: it unregisters its own login item and
-// clears its preferences (only the app can do that), then the bundle is deleted.
+// UninstallApp removes the menu bar app: the app unregisters its own login
+// item (only it can), then it is quit, its preferences are deleted and the
+// bundle is removed. The preferences go even if the app was deleted already.
 func UninstallApp() (bool, error) {
-	if _, err := os.Stat(AppPath); err != nil {
-		return false, nil
+	if err := checkHome(); err != nil {
+		return false, err
 	}
-	_ = exec.Command(filepath.Join(AppPath, "Contents", "MacOS", "AvocadoMTP"), "--uninstall").Run()
+	_, err := os.Stat(AppPath)
+	installed := err == nil
+	if installed {
+		_ = exec.Command(filepath.Join(AppPath, "Contents", "MacOS", "AvocadoMTP"), "--uninstall").Run()
+	}
 	_ = exec.Command("pkill", "-x", "AvocadoMTP").Run()
-	// The app clears its preferences, but the emptied plist file stays behind.
+	// Wait for it to quit: it may still write its preferences on the way out.
+	for i := 0; i < 20 && exec.Command("pgrep", "-x", "AvocadoMTP").Run() == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
 	_ = exec.Command("defaults", "delete", AppBundleID).Run()
 	_ = os.Remove(filepath.Join(home(), "Library", "Preferences", AppBundleID+".plist"))
+	if !installed {
+		return false, nil
+	}
 	if err := os.RemoveAll(AppPath); err != nil {
 		return true, fmt.Errorf("remove %s: %w", AppPath, err)
 	}
