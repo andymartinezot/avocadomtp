@@ -126,6 +126,9 @@ func Start() error {
 	if _, err := os.Stat(agentPath()); err != nil {
 		return fmt.Errorf("the daemon is not installed (run `avocadomtp daemon install`)")
 	}
+	if err := checkHome(); err != nil {
+		return err
+	}
 	if State().Running {
 		return nil
 	}
@@ -135,11 +138,18 @@ func Start() error {
 		// does it itself, see RestoreAutostart), because disabling it any earlier
 		// cancels the spawn launchd has merely queued. A marker older than any
 		// Start is left by one that was interrupted: autostart is really off.
+		// (If that Start stopped before the daemon ever ran, the service may
+		// start once at the next login; the daemon then turns autostart off.)
 		if err := os.WriteFile(autostartMarker(), nil, 0o600); err != nil {
 			return fmt.Errorf("start: %w", err)
 		}
-		_ = launchctl("enable", service())
-		defer RestoreAutostart()
+		if autostartEnabled() && !staleMarker() {
+			// The user turned autostart on meanwhile (SetAutostart): keep it.
+			_ = os.Remove(autostartMarker())
+		} else {
+			_ = launchctl("enable", service())
+			defer RestoreAutostart()
+		}
 	}
 	var err error
 	for i := 0; i < 20; i++ { // launchd may still be tearing down a previous instance
@@ -155,7 +165,7 @@ func Start() error {
 		// RunAtLoad only queues a speculative spawn, which launchd can still
 		// drop; kickstart is what actually runs a loaded service (and is a
 		// no-op if it is running already).
-		if err = launchctl("kickstart", service()); err == nil {
+		if err = launchctl("kickstart", service()); err == nil || State().Running {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
