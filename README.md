@@ -61,14 +61,13 @@ Security → Open Anyway**.
 
 ## Demo
 
-Plugging the phone in: macOS asks once to allow the USB accessory, the menu bar picks the device up,
-and each storage mounts as its own Finder volume.
+A clean install end to end: the one command, enabling the FUSE-T FSKit extension in System
+Settings, the menu bar app, and the phone connecting with each storage mounting as its own
+Finder volume. Recorded on macOS 26 (Apple Silicon) with a Retroid Pocket 6.
 
-![AvocadoMTP detecting a phone and mounting its storages](https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/docs/avocadomtp-demo.gif)
+![Installing AvocadoMTP, enabling FUSE-T, and a phone's storages mounting in Finder](https://raw.githubusercontent.com/andymartinezot/avocadomtp/main/docs/avocadomtp-demo.gif)
 
-▶ **[Watch the full 44-second install](https://github.com/andymartinezot/avocadomtp/blob/main/docs/avocadomtp-demo.mp4)** — the one-command install, enabling the FUSE-T FSKit
-extension in System Settings, the menu bar app, and the phone connecting. Recorded on macOS 26
-(Apple Silicon) with a Retroid Pocket 6.
+▶ **[Same recording as video](https://github.com/andymartinezot/avocadomtp/blob/main/docs/avocadomtp-demo.mp4)** (44 s, sharper text and playback controls).
 
 <details>
 <summary><b>Other ways: from source, or building the app yourself</b></summary>
