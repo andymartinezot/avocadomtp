@@ -36,3 +36,38 @@ func TestRemoveCLILink(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveDirIfOurs(t *testing.T) {
+	dir := t.TempDir()
+	junk := filepath.Join(dir, "junk")
+	if err := os.Mkdir(junk, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(junk, ".DS_Store"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeDirIfOurs(junk); err != nil {
+		t.Fatalf("folder with only .DS_Store: %v", err)
+	}
+	if _, err := os.Lstat(junk); !os.IsNotExist(err) {
+		t.Error("folder with only .DS_Store should be removed")
+	}
+
+	kept := filepath.Join(dir, "kept")
+	if err := os.Mkdir(kept, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".DS_Store", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(kept, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := removeDirIfOurs(kept); err == nil {
+		t.Error("a folder with unknown files should be refused")
+	}
+	for _, name := range []string{".DS_Store", "notes.txt"} {
+		if _, err := os.Lstat(filepath.Join(kept, name)); err != nil {
+			t.Errorf("%s should be kept: %v", name, err)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,12 +41,14 @@ func InstalledBinary() string {
 // AgentState describes the LaunchAgent.
 type AgentState struct {
 	Installed bool // the plist exists
+	Loaded    bool // launchd knows the service in our domain
 	Running   bool // the daemon process is alive
 	PID       int
 	Autostart bool // launchd starts it at login
 }
 
-// State reports whether the agent is installed, running and set to start at login.
+// State reports whether the agent is installed, loaded, running and set to
+// start at login.
 func State() AgentState {
 	st := AgentState{Autostart: autostartEnabled()}
 	if _, err := os.Stat(agentPath()); err == nil {
@@ -53,6 +56,7 @@ func State() AgentState {
 	}
 	out, err := exec.Command("launchctl", "print", service()).Output()
 	if err == nil {
+		st.Loaded = true
 		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "pid = ") {
@@ -113,20 +117,44 @@ func Start() error {
 	if State().Running {
 		return nil
 	}
-	auto := autostartEnabled()
-	if !auto {
-		// A disabled service can't be loaded: enable it just for this load.
+	if !autostartEnabled() {
+		// A disabled service can't be loaded or started: enable it just for this
+		// start. The override is restored only once the daemon is up, because
+		// disabling it any earlier cancels the spawn launchd has merely queued.
 		_ = launchctl("enable", service())
 		defer launchctl("disable", service())
 	}
 	var err error
 	for i := 0; i < 20; i++ { // launchd may still be tearing down a previous instance
-		if err = launchctl("bootstrap", domain(), agentPath()); err == nil || State().Running {
-			return nil
+		// launchd loads ~/Library/LaunchAgents itself at login, so the service
+		// is normally already in the domain: bootstrapping it again fails with
+		// EIO ("Input/output error"). Only load it when it isn't loaded yet.
+		if !State().Loaded {
+			if err = launchctl("bootstrap", domain(), agentPath()); err != nil {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+		}
+		// RunAtLoad only queues a speculative spawn, which launchd can still
+		// drop; kickstart is what actually runs a loaded service (and is a
+		// no-op if it is running already).
+		if err = launchctl("kickstart", service()); err == nil {
+			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return err
+	// launchctl returns before the process is up: wait for it, so callers that
+	// report state right after Start don't read a stale "stopped".
+	for i := 0; i < 40; i++ {
+		if State().Running {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("the daemon did not start within 10 s (see %s)", LogPath())
 }
 
 // Stop shuts the daemon down (it unmounts its volumes first) and keeps it
@@ -179,10 +207,33 @@ func Uninstall() error {
 	_ = os.Remove(InstalledBinary())
 	_ = os.Remove(filepath.Dir(InstalledBinary()))
 	_ = os.Remove(filepath.Join(appSupport, "avocadomtp.sock"))
-	_ = os.Remove(appSupport) // only if empty: never delete files we don't know
+	_ = removeDirIfOurs(appSupport)
 	_ = os.RemoveAll(CacheDir())
 	_ = os.Remove(LogPath())
 	return removeCLILink(CLILink, InstalledBinary())
+}
+
+// finderJunk are files Finder drops into any folder the user opens.
+var finderJunk = []string{".DS_Store"}
+
+// removeDirIfOurs removes dir if nothing but Finder's own files is left in it:
+// files we don't know are never deleted.
+func removeDirIfOurs(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !slices.Contains(finderJunk, e.Name()) || !e.Type().IsRegular() {
+			return fmt.Errorf("%s is not empty", dir)
+		}
+	}
+	for _, e := range entries {
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Remove(dir)
 }
 
 // CLILink is where the menu bar app's "Install command-line tool…" puts a
@@ -213,6 +264,9 @@ func CacheDir() string { return filepath.Join(home(), "Library", "Caches", "Avoc
 // AppPath is where the menu bar app is installed.
 const AppPath = "/Applications/AvocadoMTP.app"
 
+// AppBundleID is the menu bar app's bundle identifier (its preferences domain).
+const AppBundleID = "com.andymartinezot.avocadomtp.menubar"
+
 // UninstallApp removes the menu bar app: it unregisters its own login item and
 // clears its preferences (only the app can do that), then the bundle is deleted.
 func UninstallApp() (bool, error) {
@@ -221,6 +275,9 @@ func UninstallApp() (bool, error) {
 	}
 	_ = exec.Command(filepath.Join(AppPath, "Contents", "MacOS", "AvocadoMTP"), "--uninstall").Run()
 	_ = exec.Command("pkill", "-x", "AvocadoMTP").Run()
+	// The app clears its preferences, but the emptied plist file stays behind.
+	_ = exec.Command("defaults", "delete", AppBundleID).Run()
+	_ = os.Remove(filepath.Join(home(), "Library", "Preferences", AppBundleID+".plist"))
 	if err := os.RemoveAll(AppPath); err != nil {
 		return true, fmt.Errorf("remove %s: %w", AppPath, err)
 	}
