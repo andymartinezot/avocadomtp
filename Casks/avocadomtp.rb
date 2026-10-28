@@ -3,8 +3,8 @@
 #   brew install --cask avocadomtp
 # scripts/update-cask.sh X.Y.Z sets version and sha256 after each release.
 cask "avocadomtp" do
-  version "0.2.2"
-  sha256 "06f800a3f8db00acde9801a9250fff4bfc6cb211d27599ebcaf84b584c6f5dd0"
+  version "0.3.0"
+  sha256 "7a7094f3fcee1bfafb8ef898ad5d12d5c735f6f84ee0868ee86d1aba5f9fd03b"
 
   url "https://github.com/andymartinezot/avocadomtp/releases/download/v#{version}/AvocadoMTP.zip"
   name "AvocadoMTP"
