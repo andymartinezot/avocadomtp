@@ -170,6 +170,9 @@ func (s *Server) watch(ctx context.Context) {
 		case <-s.Changes:
 			time.Sleep(700 * time.Millisecond) // let the device finish enumerating
 			drain(s.Changes)
+			s.mu.Lock()
+			s.lastTry = time.Time{} // the USB devices changed: don't reuse the last failure
+			s.mu.Unlock()
 		case <-s.kick:
 		case <-safety.C:
 			s.mu.RLock()
@@ -261,7 +264,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 				s.logf("phone not available: %v", firstLine(err))
 				// No phone plugged in is a state, not an error: the menu shows
 				// an error only when a phone is there but can't be used.
-				msg := firstLine(err)
+				msg := vfs.Printable(firstLine(err)) // shown in the menu; may hold USB strings
 				if errors.Is(err, device.ErrNoDevice) {
 					msg = ""
 				}

@@ -31,11 +31,15 @@ struct AvocadoMTPApp: App {
 /// The icon in the menu bar, plus the total speed while files are moving.
 struct MenuBarLabel: View {
     @ObservedObject var model: AppModel
+    /// Part of the icon's identity: a dot icon is drawn in the menu bar's
+    /// text colour, so it must be redrawn when the menu bar turns light or dark.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 4) {
             Image(nsImage: AvocadoIcon.menuBar(active: model.state?.connected == true, light: model.light))
-                .accessibilityLabel("AvocadoMTP: " + model.light.meaning)
+                .id(colorScheme)
+                .accessibilityLabel("AvocadoMTP: " + (model.serviceRunning ? model.light.meaning : "service stopped"))
             if model.isTransferring, let st = model.state {
                 Text(Format.rate(st.rateIn + st.rateOut))
                     .monospacedDigit()

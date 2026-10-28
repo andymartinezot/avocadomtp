@@ -529,3 +529,15 @@ func TestNoPhoneIsNotAnError(t *testing.T) {
 		t.Fatalf("snapshot %+v: no phone must carry no error", snap)
 	}
 }
+
+func TestPhoneErrorIsShown(t *testing.T) {
+	h := start(t, false)
+	h.mu.Lock()
+	h.openErr = errors.New("claim MTP interface: LIBUSB_ERROR_ACCESS")
+	h.mu.Unlock()
+	c := dial(t, h)
+	c.Status(context.Background())
+	if snap := h.srv.Hub.Snapshot(); snap.Error == "" || snap.Asleep || snap.Connected {
+		t.Fatalf("snapshot %+v: a phone that can't be used must carry its error", snap)
+	}
+}
