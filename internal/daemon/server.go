@@ -259,7 +259,13 @@ func (s *Server) acquire() (Phone, func(), error) {
 		if err != nil {
 			if s.lastErr == nil || err.Error() != s.lastErr.Error() {
 				s.logf("phone not available: %v", firstLine(err))
-				s.Hub.SetPhone(false, nil, firstLine(err), errors.Is(err, device.ErrNotResponding))
+				// No phone plugged in is a state, not an error: the menu shows
+				// an error only when a phone is there but can't be used.
+				msg := firstLine(err)
+				if errors.Is(err, device.ErrNoDevice) {
+					msg = ""
+				}
+				s.Hub.SetPhone(false, nil, msg, errors.Is(err, device.ErrNotResponding))
 			}
 			s.lastErr = err
 			s.mu.Unlock()

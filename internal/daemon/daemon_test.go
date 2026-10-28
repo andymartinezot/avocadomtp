@@ -518,3 +518,14 @@ func TestCheckRename(t *testing.T) {
 		}
 	}
 }
+
+func TestNoPhoneIsNotAnError(t *testing.T) {
+	h := start(t, false)
+	c := dial(t, h)
+	if st, _ := c.Status(context.Background()); st.Connected {
+		t.Fatal("must not be connected")
+	}
+	if snap := h.srv.Hub.Snapshot(); snap.Error != "" || snap.Asleep {
+		t.Fatalf("snapshot %+v: no phone must carry no error", snap)
+	}
+}

@@ -44,7 +44,7 @@ type State struct {
 	Seq       uint64             `json:"seq"`
 	Connected bool               `json:"connected"`
 	Device    *remote.DeviceInfo `json:"device,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Error     string             `json:"error,omitempty"`  // a phone is there but can't be used
 	Asleep    bool               `json:"asleep,omitempty"` // plugged in but not answering
 	Mounts    []Mount            `json:"mounts"`
 	Transfers []TransferInfo     `json:"transfers"`

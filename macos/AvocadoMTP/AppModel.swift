@@ -28,6 +28,15 @@ final class AppModel: ObservableObject {
         state?.transfers.contains { $0.state == "active" } ?? false
     }
 
+    /// The menu bar dot. A stopped service shows no dot: that's the user's choice.
+    var light: AvocadoIcon.Light {
+        guard let st = state else { return .none }
+        if st.connected { return isTransferring ? .transferring : .ready }
+        if st.asleep == true { return .asleep }
+        if let error = st.error, !error.isEmpty { return .error }
+        return .none
+    }
+
     init() {
         startWatching()
         Task {

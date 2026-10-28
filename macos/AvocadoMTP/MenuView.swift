@@ -46,7 +46,7 @@ struct MenuView: View {
 
     private var header: some View {
         HStack(alignment: .center) {
-            Image(nsImage: AvocadoIcon.template(active: model.state?.connected == true))
+            Image(nsImage: AvocadoIcon.menuBar(active: model.state?.connected == true, light: model.light))
             Text("AvocadoMTP").font(.headline)
             Spacer()
             Toggle("", isOn: Binding(
@@ -115,7 +115,9 @@ struct MenuView: View {
 
     private func phone(_ st: ActivityState) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: st.connected ? "iphone.gen3" : st.asleep == true ? "moon.zzz" : "iphone.gen3.slash")
+            Image(systemName: st.connected ? "iphone.gen3"
+                  : st.asleep == true ? "moon.zzz"
+                  : st.error?.isEmpty == false ? "exclamationmark.triangle" : "iphone.gen3.slash")
                 .font(.title2)
                 .foregroundStyle(st.connected ? Color.accentColor : .secondary)
             VStack(alignment: .leading, spacing: 1) {
@@ -132,6 +134,13 @@ struct MenuView: View {
                         .buttonStyle(.link)
                         .font(.caption)
                         .disabled(model.busy)
+                } else if let error = st.error, !error.isEmpty {
+                    Text("Your phone can't be used").font(.body.weight(.semibold))
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("No phone connected").font(.body.weight(.semibold))
                     Text("Unlock it and choose “File transfer” in its USB notification.")

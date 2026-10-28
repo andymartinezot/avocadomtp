@@ -361,7 +361,7 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 
 | In the menu | What it does |
 |---|---|
-| 🥑 icon | outline when idle, filled pit when a phone is connected, total speed while copying |
+| 🥑 icon | outline when idle, filled pit when a phone is connected, total speed while copying; a dot shows the state: none (no phone), 🟢 connected, 🟣 copying, 🟠 phone asleep, 🔴 phone can't be used |
 | On/off switch | starts or stops the service (`avocadomtp daemon start/stop`) |
 | Phone | model and maker, or how to connect it; "isn't answering" (with "Try again") when it's plugged in but asleep |
 | Volumes | name and path: click to open in Finder, ⏏ to eject one, "Eject all" before unplugging, "Mount all" to bring them back; right-click → "Rename…" |
