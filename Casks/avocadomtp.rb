@@ -1,5 +1,6 @@
 # Homebrew cask for AvocadoMTP. This repository is its own tap:
 #   brew tap andymartinezot/avocadomtp https://github.com/andymartinezot/avocadomtp
+#   brew trust --cask andymartinezot/avocadomtp/avocadomtp
 #   brew install --cask avocadomtp
 # scripts/update-cask.sh X.Y.Z sets version and sha256 after each release.
 cask "avocadomtp" do

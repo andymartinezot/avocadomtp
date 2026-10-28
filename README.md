@@ -58,6 +58,7 @@ Security → Open Anyway**.
 
 ```sh
 brew tap andymartinezot/avocadomtp https://github.com/andymartinezot/avocadomtp
+brew trust --cask andymartinezot/avocadomtp/avocadomtp   # Homebrew asks you to trust third-party casks
 brew install --cask avocadomtp     # then open AvocadoMTP once: it sets up the service
 brew upgrade --cask avocadomtp     # update
 ```
