@@ -213,8 +213,9 @@ final class AppModel: ObservableObject {
     /// Runs the update in Terminal, so the user sees its progress and any
     /// password prompt: Homebrew's upgrade for a cask install, the installer otherwise.
     func installUpdate() {
+        guard let version = update?.version else { return }
         do {
-            try UpdateChecker.openUpdateInTerminal()
+            try UpdateChecker.openUpdateInTerminal(version: version)
         } catch {
             message = "Couldn't start the update: " + error.localizedDescription
         }

@@ -103,6 +103,7 @@ type Storage struct {
 	Name        string `json:"name"` // unique, slash-free: use as volume name
 	Description string `json:"description"`
 	VolumeLabel string `json:"volumeLabel,omitempty"`
+	Type        uint16 `json:"type,omitempty"` // MTP storage type (ptp.StorageFixedRAM, …)
 	Capacity    uint64 `json:"capacity"`
 	Free        uint64 `json:"free"`
 	ReadOnly    bool   `json:"readOnly,omitempty"`

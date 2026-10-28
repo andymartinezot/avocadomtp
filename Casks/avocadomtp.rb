@@ -29,8 +29,10 @@ cask "avocadomtp" do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/AvocadoMTP.app"]
   end
 
-  # An upgrade skips these, so the service keeps running; the new app updates
-  # it when it opens again.
+  # These run on upgrades too: the service stops and its LaunchAgent goes, so
+  # it can't come back at login after an uninstall. Homebrew reopens the app
+  # after an upgrade (and it opens at login), and the app then installs and
+  # starts the new service.
   uninstall launchctl:  "com.andymartinezot.avocadomtp",
             quit:       "com.andymartinezot.avocadomtp.menubar",
             login_item: "AvocadoMTP",

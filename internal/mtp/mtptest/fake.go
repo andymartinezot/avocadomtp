@@ -53,6 +53,9 @@ func New(t testing.TB) *Fake {
 }
 
 // Reset drops any half-finished transfer, like a USB reset before a new session.
+// SetStorageDescription changes what the device calls a storage.
+func (f *Fake) SetStorageDescription(id uint32, desc string) { f.storages[id] = desc }
+
 func (f *Fake) Reset() {
 	f.out, f.inData, f.dataBuf = nil, false, nil
 }
@@ -177,7 +180,11 @@ func (f *Fake) handle(op uint16, tx uint32, p []uint32, in []byte) {
 		ok()
 	case ptp.OpGetStorageInfo:
 		var e ptp.Encoder
-		e.U16(3)
+		if p[0]>>16 == 2 {
+			e.U16(ptp.StorageRemovableRAM) // the SD card
+		} else {
+			e.U16(ptp.StorageFixedRAM)
+		}
 		e.U16(2)
 		e.U16(0)
 		e.U64(64 << 30)

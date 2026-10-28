@@ -154,7 +154,18 @@ enum ServiceControl {
     /// Where "Install command-line tool…" links the CLI (daemon.CLILink).
     static let cliLink = "/usr/local/bin/avocadomtp"
 
-    static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: binary) }
+    /// The service's LaunchAgent (daemon.Label).
+    static var agentPlist: String {
+        FileManager.default.homeDirectoryForCurrentUser.path
+            + "/Library/LaunchAgents/com.andymartinezot.avocadomtp.plist"
+    }
+
+    /// Both the binary and its LaunchAgent: `brew upgrade` removes the agent
+    /// (the cask's uninstall steps run on upgrades too) and leaves the binary,
+    /// and the app must then install and start the service again.
+    static var isInstalled: Bool {
+        FileManager.default.isExecutableFile(atPath: binary) && FileManager.default.fileExists(atPath: agentPlist)
+    }
 
     @discardableResult
     static func run(_ args: [String], executable: String = binary) throws -> String {

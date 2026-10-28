@@ -57,6 +57,7 @@ type Server struct {
 	Renamed func(storageID uint32) error
 	events  chan bool
 
+	renameMu sync.Mutex   // one volume rename at a time
 	mu       sync.RWMutex // write-locked only to swap the phone
 	phone    Phone
 	closing  bool
@@ -629,7 +630,10 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 			return withErrno(err, syscall.EINVAL)
 		}
 	}
-	sts, err := remote.NewFS(p).Storages(ctx)
+	s.renameMu.Lock()
+	defer s.renameMu.Unlock()
+	before := remote.NewFS(p)
+	sts, err := before.Storages(ctx)
 	if err != nil {
 		return err
 	}
@@ -642,9 +646,20 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 	if target == nil {
 		return withErrno(fmt.Errorf("no storage %08X on the phone", id), syscall.ENOENT)
 	}
-	for _, st := range sts {
-		if st.ID != id && name != "" && vfs.SameName(st.Name, name) {
-			return withErrno(fmt.Errorf("another volume is already called %s", st.Name), syscall.EEXIST)
+	// The new name must leave every other volume's name as it is: one that
+	// changed would still be mounted under its old name.
+	after := remote.NewFS(p)
+	if after.Custom == nil {
+		after.Custom = map[uint32]string{}
+	}
+	after.Custom[id] = name
+	renamed, err := after.Storages(ctx)
+	if err != nil {
+		return err
+	}
+	for i, st := range renamed {
+		if st.ID != id && st.Name != sts[i].Name || st.ID == id && name != "" && st.Name != name {
+			return withErrno(fmt.Errorf("another volume is called that (%s)", clash(sts, id, st.Name, name)), syscall.EEXIST)
 		}
 	}
 	for _, t := range s.Hub.Snapshot().Transfers {
@@ -664,6 +679,9 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 	if s.Renamed != nil {
 		if err := s.Renamed(id); err != nil {
 			_ = volnames.Set(key, id, old)
+			if !errors.Is(err, syscall.EBUSY) {
+				_ = s.Renamed(id) // unmounted but not mounted again: back under the old name
+			}
 			return err
 		}
 	}
@@ -675,6 +693,16 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 	return nil
 }
 
+// clash names the volume a rename collides with, for the error message.
+func clash(sts []*vfs.Storage, id uint32, got, want string) string {
+	for _, st := range sts {
+		if st.ID != id && (vfs.SameName(st.Name, want) || vfs.SameName(st.Name, got)) {
+			return st.Name
+		}
+	}
+	return got
+}
+
 func storagesOf(ctx context.Context, p Phone) ([]Storage, error) {
 	sts, err := remote.NewFS(p).Storages(ctx)
 	if err != nil {
@@ -683,7 +711,7 @@ func storagesOf(ctx context.Context, p Phone) ([]Storage, error) {
 	out := make([]Storage, len(sts))
 	for i, st := range sts {
 		out[i] = Storage{
-			ID: st.ID, Name: st.Name, Description: st.Info.Description, VolumeLabel: st.Info.VolumeLabel,
+			ID: st.ID, Name: st.Name, Description: st.Info.Description, VolumeLabel: st.Info.VolumeLabel, Type: st.Info.StorageType,
 			Capacity: st.Info.MaxCapacity, Free: st.Info.FreeSpaceInBytes, ReadOnly: st.Info.AccessCapability != 0,
 		}
 	}

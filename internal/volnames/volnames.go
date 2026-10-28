@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -40,10 +41,15 @@ func Key(serial, model string) string {
 type file map[string]map[string]string
 
 func read() (file, error) {
-	b, err := os.ReadFile(Path())
+	f0, err := os.Open(Path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return file{}, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer f0.Close()
+	b, err := io.ReadAll(io.LimitReader(f0, maxFile+1))
 	if err != nil {
 		return nil, err
 	}

@@ -105,21 +105,31 @@ func (m *Manager) Eject(storageID uint32) error {
 // its old name and Rename returns EBUSY.
 func (m *Manager) Rename(ctx context.Context, r remote.Remote, storageID uint32) error {
 	m.mu.Lock()
-	mt := m.mounts[storageID]
+	mt, ejected := m.mounts[storageID], m.ejected[storageID]
 	m.mu.Unlock()
-	if mt == nil {
+	if ejected {
 		return nil
 	}
-	if out, err := exec.Command("umount", mt.dir).CombinedOutput(); err != nil {
-		m.logf("rename: umount %s: %v: %s", mt.dir, err, strings.TrimSpace(string(out)))
-		return &busyError{mt.name}
+	if mt != nil {
+		if out, err := exec.Command("umount", mt.dir).CombinedOutput(); err != nil {
+			m.logf("rename: umount %s: %v: %s", mt.dir, err, strings.TrimSpace(string(out)))
+			return &busyError{mt.name}
+		}
+		select {
+		case <-mt.done:
+		case <-time.After(10 * time.Second):
+			return &busyError{mt.name}
+		}
 	}
-	select {
-	case <-mt.done:
-	case <-time.After(10 * time.Second):
-		return &busyError{mt.name}
+	if err := m.MountAll(ctx, r); err != nil {
+		return err
 	}
-	return m.MountAll(ctx, r)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mounts[storageID] == nil {
+		return fmt.Errorf("couldn't mount the volume under its new name (see the log)")
+	}
+	return nil
 }
 
 type busyError struct{ name string }

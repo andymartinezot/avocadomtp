@@ -148,7 +148,6 @@ func Start() error {
 		if autostartEnabled() && !staleMarker() {
 			// The user turned autostart on meanwhile (SetAutostart): keep it.
 			_ = os.Remove(autostartMarker())
-			_ = os.Remove(volnames.Path())
 		} else {
 			_ = launchctl("enable", service())
 			defer RestoreAutostart()
@@ -264,15 +263,27 @@ func Uninstall() error {
 	if err := os.Remove(agentPath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	appSupport := filepath.Dir(filepath.Dir(InstalledBinary()))
-	_ = os.Remove(InstalledBinary())
-	_ = os.Remove(filepath.Dir(InstalledBinary()))
-	_ = os.Remove(filepath.Join(appSupport, "avocadomtp.sock"))
-	_ = os.Remove(autostartMarker())
-	_ = removeDirIfOurs(appSupport)
+	for _, p := range serviceFiles() {
+		_ = os.Remove(p)
+	}
+	_ = removeDirIfOurs(filepath.Dir(filepath.Dir(InstalledBinary())))
 	_ = os.RemoveAll(CacheDir())
 	_ = os.Remove(LogPath())
 	return removeCLILink(CLILink, InstalledBinary())
+}
+
+// serviceFiles are what the service leaves in Application Support, in the
+// order Uninstall removes them (files before their folder).
+func serviceFiles() []string {
+	appSupport := filepath.Dir(filepath.Dir(InstalledBinary()))
+	return []string{
+		InstalledBinary(),
+		filepath.Dir(InstalledBinary()),
+		filepath.Join(appSupport, "avocadomtp.sock"),
+		autostartMarker(),
+		volnames.Path(),
+		volnames.Path() + ".new",
+	}
 }
 
 // finderJunk are files Finder drops into any folder the user opens.

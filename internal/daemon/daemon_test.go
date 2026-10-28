@@ -40,6 +40,7 @@ type harness struct {
 	present bool
 	openErr error // returned by Open while set
 	opens   int
+	fake    *mtptest.Fake
 }
 
 func start(t *testing.T, present bool) *harness { return startWith(t, present, nil) }
@@ -53,6 +54,7 @@ func startWith(t *testing.T, present bool, changes <-chan struct{}) *harness {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	h := &harness{socket: filepath.Join(dir, "s"), present: present}
 	fake := mtptest.New(t)
+	h.fake = fake
 	srv := &Server{Poll: 50 * time.Millisecond, Changes: changes, Hub: activity.NewHub(), Open: func() (Phone, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -418,6 +420,18 @@ func TestRenameVolume(t *testing.T) {
 	if err := c.RenameVolume(ctx, internal, ""); err != nil || name() != "Phone" {
 		t.Fatalf("reset: %v, name %q", err, name())
 	}
+
+	// A reset that would rename another volume is refused: that volume is
+	// still mounted under its old name.
+	if err := c.RenameVolume(ctx, internal, "Games"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RenameVolume(ctx, 0x00020001, "Phone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RenameVolume(ctx, internal, ""); !errors.Is(err, syscall.EEXIST) || name() != "Games" {
+		t.Fatalf("clashing reset: %v, name %q", err, name())
+	}
 }
 
 func TestAsleepPhone(t *testing.T) {
@@ -442,5 +456,33 @@ func TestAsleepPhone(t *testing.T) {
 	}
 	if snap := h.srv.Hub.Snapshot(); snap.Asleep || !snap.Connected {
 		t.Fatalf("snapshot %+v, want connected", snap)
+	}
+}
+
+// The CLI names volumes from what the daemon reports; it must agree with the
+// daemon (and so with the Finder volumes) for a phone in any language.
+func TestClientNamesMatchDaemon(t *testing.T) {
+	h := start(t, false)
+	h.fake.SetStorageDescription(internal, "Almacenamiento interno compartido")
+	h.mu.Lock()
+	h.present = true
+	h.mu.Unlock()
+	c := dial(t, h)
+	ctx := context.Background()
+	st, err := c.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Storages[0].Name != "Phone" {
+		t.Fatalf("daemon named the internal storage %q", st.Storages[0].Name)
+	}
+	sts, err := remote.NewFS(c).Storages(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range sts {
+		if s.Name != st.Storages[i].Name {
+			t.Errorf("client name %q, daemon name %q", s.Name, st.Storages[i].Name)
+		}
 	}
 }

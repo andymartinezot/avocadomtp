@@ -36,7 +36,8 @@ enum UpdateChecker {
     static func parse(tag: String, page: String?) -> Release? {
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         let parts = version.split(separator: ".", omittingEmptySubsequences: false)
-        guard (2...3).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) })
+        guard (2...3).contains(parts.count),
+              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } })
         else { return nil }
         let fallback = URL(string: "https://github.com/\(repo)/releases/tag/v\(version)")!
         guard let page, let url = URL(string: page), url.scheme == "https", url.host == "github.com"
@@ -51,14 +52,15 @@ enum UpdateChecker {
         }
     }
 
-    /// The commands the update runs in Terminal.
-    static var updateScript: String {
+    /// The commands the update runs in Terminal: the installer from the
+    /// release's own tag, so what runs matches what the notice announced.
+    static func updateScript(version: String) -> String {
         let update = installedByHomebrew
             ? """
               for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && eval "$("$b" shellenv)"; done
               brew update && brew upgrade --cask avocadomtp
               """
-            : "curl -fsSL https://raw.githubusercontent.com/\(repo)/main/install.sh | bash"
+            : "curl -fsSL https://raw.githubusercontent.com/\(repo)/v\(version)/install.sh | bash"
         return """
             #!/bin/bash
             # Written by AvocadoMTP's "Update" button.
@@ -71,12 +73,12 @@ enum UpdateChecker {
 
     /// Writes the update script to the app's cache folder and opens it, which
     /// runs it in Terminal (no extra permission needed, unlike scripting Terminal).
-    static func openUpdateInTerminal() throws {
+    static func openUpdateInTerminal(version: String) throws {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/AvocadoMTP", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("update.command")
-        try updateScript.write(to: file, atomically: true, encoding: .utf8)
+        try updateScript(version: version).write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         guard NSWorkspace.shared.open(file) else { throw DaemonError.io("Terminal didn't open the update") }
     }

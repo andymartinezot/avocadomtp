@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/andymartinezot/avocadomtp/internal/volnames"
 )
 
 func TestRemoveCLILink(t *testing.T) {
@@ -106,5 +108,16 @@ func TestStaleAutostartMarker(t *testing.T) {
 	}
 	if !staleMarker() {
 		t.Error("an old marker is left by an interrupted Start")
+	}
+}
+
+func TestUninstallRemovesVolumeNames(t *testing.T) {
+	t.Setenv("AVOCADOMTP_VOLUME_NAMES", "")
+	found := false
+	for _, p := range serviceFiles() {
+		found = found || p == volnames.Path()
+	}
+	if !found {
+		t.Fatalf("Uninstall must remove %s", volnames.Path())
 	}
 }

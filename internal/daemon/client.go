@@ -137,7 +137,7 @@ func (c *Client) StorageInfo(ctx context.Context, id uint32) (*ptp.StorageInfo, 
 	}
 	for _, s := range st.Storages {
 		if s.ID == id {
-			info := &ptp.StorageInfo{MaxCapacity: s.Capacity, FreeSpaceInBytes: s.Free,
+			info := &ptp.StorageInfo{StorageType: s.Type, MaxCapacity: s.Capacity, FreeSpaceInBytes: s.Free,
 				Description: s.Description, VolumeLabel: s.VolumeLabel}
 			if s.ReadOnly {
 				info.AccessCapability = 1
