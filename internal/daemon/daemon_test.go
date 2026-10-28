@@ -442,10 +442,7 @@ func TestAsleepPhone(t *testing.T) {
 	h.mu.Unlock()
 	c := dial(t, h)
 	ctx := context.Background()
-	if st, _ := c.Status(ctx); st.Connected {
-		t.Fatal("must not be connected")
-	}
-	if snap := h.srv.Hub.Snapshot(); !snap.Asleep || snap.Connected {
+	if snap := waitSnapshot(t, h, c, func(s activity.State) bool { return s.Asleep }); snap.Connected {
 		t.Fatalf("snapshot %+v, want asleep", snap)
 	}
 	h.mu.Lock()
@@ -536,8 +533,26 @@ func TestPhoneErrorIsShown(t *testing.T) {
 	h.openErr = errors.New("claim MTP interface: LIBUSB_ERROR_ACCESS")
 	h.mu.Unlock()
 	c := dial(t, h)
-	c.Status(context.Background())
-	if snap := h.srv.Hub.Snapshot(); snap.Error == "" || snap.Asleep || snap.Connected {
+	snap := waitSnapshot(t, h, c, func(s activity.State) bool { return s.Error != "" })
+	if snap.Asleep || snap.Connected {
 		t.Fatalf("snapshot %+v: a phone that can't be used must carry its error", snap)
+	}
+}
+
+// waitSnapshot asks for the status until the hub's snapshot satisfies ok: the
+// poll loop may have cached an earlier failure for up to a second.
+func waitSnapshot(t *testing.T, h *harness, c *Client, ok func(activity.State) bool) activity.State {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c.Status(context.Background())
+		snap := h.srv.Hub.Snapshot()
+		if ok(snap) {
+			return snap
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("snapshot never matched: %+v", snap)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
