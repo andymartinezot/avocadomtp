@@ -53,12 +53,12 @@ func New(t testing.TB) *Fake {
 }
 
 // Reset drops any half-finished transfer, like a USB reset before a new session.
-// SetStorageDescription changes what the device calls a storage.
-func (f *Fake) SetStorageDescription(id uint32, desc string) { f.storages[id] = desc }
-
 func (f *Fake) Reset() {
 	f.out, f.inData, f.dataBuf = nil, false, nil
 }
+
+// SetStorageDescription changes what the device calls a storage.
+func (f *Fake) SetStorageDescription(id uint32, desc string) { f.storages[id] = desc }
 
 func (f *Fake) ClearHalt()                 {}
 func (f *Fake) CancelRequest(uint32) error { return nil }

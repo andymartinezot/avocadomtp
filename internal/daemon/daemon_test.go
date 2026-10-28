@@ -20,6 +20,7 @@ import (
 	"github.com/andymartinezot/avocadomtp/internal/mtp/mtptest"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
+	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
 const internal = 0x00010001
@@ -483,6 +484,37 @@ func TestClientNamesMatchDaemon(t *testing.T) {
 	for i, s := range sts {
 		if s.Name != st.Storages[i].Name {
 			t.Errorf("client name %q, daemon name %q", s.Name, st.Storages[i].Name)
+		}
+	}
+}
+
+func TestCheckRename(t *testing.T) {
+	vols := func(names ...string) []*vfs.Storage {
+		out := make([]*vfs.Storage, len(names))
+		for i, n := range names {
+			out[i] = &vfs.Storage{ID: uint32(i + 1), Name: n}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name          string
+		before, after []*vfs.Storage
+		want          error // nil, EEXIST or EBUSY
+	}{
+		{"rename", vols("Phone", "SD"), vols("Games", "SD"), nil},
+		{"other volume renamed", vols("Phone", "SD"), vols("SD", "SD (2)"), syscall.EEXIST},
+		{"target suffixed", vols("SD", "Phone"), vols("SD", "Phone (2)"), syscall.EEXIST},
+		{"storage appeared", vols("Phone", "SD"), vols("Games", "SD", "USB"), syscall.EBUSY},
+		{"storage replaced", vols("Phone", "SD"), []*vfs.Storage{{ID: 1, Name: "Games"}, {ID: 9, Name: "SD"}}, syscall.EBUSY},
+		{"storage gone", vols("Phone", "SD"), vols("Games"), syscall.EBUSY},
+	} {
+		want := map[string]string{"rename": "Games", "other volume renamed": "SD", "target suffixed": "Phone"}[tc.name]
+		if want == "" {
+			want = "Games"
+		}
+		err := checkRename(tc.before, tc.after, 1, want)
+		if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
 		}
 	}
 }

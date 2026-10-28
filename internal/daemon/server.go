@@ -657,10 +657,8 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 	if err != nil {
 		return err
 	}
-	for i, st := range renamed {
-		if st.ID != id && st.Name != sts[i].Name || st.ID == id && name != "" && st.Name != name {
-			return withErrno(fmt.Errorf("another volume is called that (%s)", clash(sts, id, st.Name, name)), syscall.EEXIST)
-		}
+	if err := checkRename(sts, renamed, id, name); err != nil {
+		return err
 	}
 	for _, t := range s.Hub.Snapshot().Transfers {
 		if t.State == "active" && (t.Path == target.Name || strings.HasPrefix(t.Path, target.Name+"/")) {
@@ -689,6 +687,30 @@ func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name stri
 		s.logf("volume %s: back to the phone's name", vfs.Printable(target.Name))
 	} else {
 		s.logf("renamed volume %s to %s", vfs.Printable(target.Name), vfs.Printable(name))
+	}
+	return nil
+}
+
+// checkRename compares the volume names before and after giving storage id
+// the name (by storage ID: the phone answered twice and may have changed).
+// Every other volume must keep its name, and the target must get exactly the
+// name asked for; a storage that came or went means "try again".
+func checkRename(before, after []*vfs.Storage, id uint32, name string) error {
+	prev := make(map[uint32]string, len(before))
+	for _, st := range before {
+		prev[st.ID] = st.Name
+	}
+	if len(after) != len(before) {
+		return withErrno(errors.New("the phone's storages changed; try again"), syscall.EBUSY)
+	}
+	for _, st := range after {
+		old, ok := prev[st.ID]
+		switch {
+		case !ok:
+			return withErrno(errors.New("the phone's storages changed; try again"), syscall.EBUSY)
+		case st.ID != id && st.Name != old, st.ID == id && name != "" && st.Name != name:
+			return withErrno(fmt.Errorf("another volume is called that (%s)", clash(before, id, st.Name, name)), syscall.EEXIST)
+		}
 	}
 	return nil
 }
