@@ -158,6 +158,7 @@ func runDaemon(serial, socket string, mount bool) error {
 		mounts.Activity = hub
 		srv.Eject = mounts.Eject
 		srv.Remount = func() error { return mounts.Remount(ctx, srv.Remote()) }
+		srv.Renamed = func(id uint32) error { return mounts.Rename(ctx, srv.Remote(), id) }
 		srv.OnConnect = func() {
 			if err := mounts.MountAll(ctx, srv.Remote()); err != nil {
 				logger.Printf("mount: %v", err)

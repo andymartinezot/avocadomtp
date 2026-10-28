@@ -260,3 +260,73 @@ func TestNamelessChildrenKeepFoldersNonEmpty(t *testing.T) {
 		t.Fatalf("Empty = %v, %v; want false", empty, err)
 	}
 }
+
+func TestDeviceNameByStorageType(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		storages map[uint32]*ptp.StorageInfo
+		want     []string
+	}{
+		{"localized internal + SD", map[uint32]*ptp.StorageInfo{
+			1: {StorageType: ptp.StorageFixedRAM, Description: "Almacenamiento interno compartido"},
+			2: {StorageType: ptp.StorageRemovableRAM, Description: "Retroid4"},
+		}, []string{"Retroid Pocket 4 Pro", "Retroid4"}},
+		{"two built-in storages keep their descriptions", map[uint32]*ptp.StorageInfo{
+			1: {StorageType: ptp.StorageFixedRAM, Description: "Speicher A"},
+			2: {StorageType: ptp.StorageFixedRAM, Description: "Speicher B"},
+		}, []string{"Speicher A", "Speicher B"}},
+		{"unknown type falls back to the English rule", map[uint32]*ptp.StorageInfo{
+			1: {Description: "Internal shared storage"},
+			2: {Description: "Stockage interne partagé"},
+		}, []string{"Retroid Pocket 4 Pro", "Stockage interne partagé"}},
+	} {
+		f := New(&hostileBackend{storages: tc.storages})
+		f.DeviceName = "Retroid Pocket 4 Pro"
+		got, err := f.Storages(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, s := range got {
+			if s.Name != tc.want[i] {
+				t.Errorf("%s: storage %d named %q, want %q", tc.name, s.ID, s.Name, tc.want[i])
+			}
+		}
+	}
+}
+
+func TestCustomNames(t *testing.T) {
+	b := &hostileBackend{storages: map[uint32]*ptp.StorageInfo{
+		1: {StorageType: ptp.StorageFixedRAM, Description: "Internal shared storage"},
+		2: {StorageType: ptp.StorageRemovableRAM, Description: "SD card"},
+		3: {StorageType: ptp.StorageRemovableRAM, Description: "USB"},
+	}}
+	f := New(b)
+	f.DeviceName = "Phone"
+	f.Custom = map[uint32]string{1: "Games", 2: "../evil", 3: "games"}
+	got, err := f.Storages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An invalid stored name is ignored; a colliding one gets a suffix.
+	want := []string{"Games", "SD card", "games (2)"}
+	for i, s := range got {
+		if s.Name != want[i] {
+			t.Errorf("storage %d named %q, want %q", s.ID, s.Name, want[i])
+		}
+	}
+	if e, err := f.Stat(context.Background(), "/Internal shared storage"); err != nil || e.StorageID != 1 {
+		t.Errorf("the phone's own description must still resolve: %+v %v", e, err)
+	}
+}
+
+func TestCheckVolumeName(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"Games": true, "Música 2": true, "a,b": true,
+		"": false, " x": false, "x ": false, ".hidden": false, "a/b": false, "a:b": false,
+		"..": false, "x\x1b": false, "x‮": false, strings.Repeat("a", MaxVolumeName+1): false,
+	} {
+		if err := CheckVolumeName(name); (err == nil) != ok {
+			t.Errorf("CheckVolumeName(%q) = %v, want ok=%v", name, err, ok)
+		}
+	}
+}

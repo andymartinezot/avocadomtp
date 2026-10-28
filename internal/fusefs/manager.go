@@ -99,6 +99,36 @@ func (m *Manager) Eject(storageID uint32) error {
 	return nil
 }
 
+// Rename mounts a storage again after its name changed. A volume that isn't
+// mounted (ejected) just takes the new name the next time. Unmounting is never
+// forced: if macOS refuses (files open on the volume), it stays mounted under
+// its old name and Rename returns EBUSY.
+func (m *Manager) Rename(ctx context.Context, r remote.Remote, storageID uint32) error {
+	m.mu.Lock()
+	mt := m.mounts[storageID]
+	m.mu.Unlock()
+	if mt == nil {
+		return nil
+	}
+	if out, err := exec.Command("umount", mt.dir).CombinedOutput(); err != nil {
+		m.logf("rename: umount %s: %v: %s", mt.dir, err, strings.TrimSpace(string(out)))
+		return &busyError{mt.name}
+	}
+	select {
+	case <-mt.done:
+	case <-time.After(10 * time.Second):
+		return &busyError{mt.name}
+	}
+	return m.MountAll(ctx, r)
+}
+
+type busyError struct{ name string }
+
+func (e *busyError) Error() string {
+	return e.name + " is in use (close the files and Finder windows on it, then try again)"
+}
+func (e *busyError) Unwrap() error { return syscall.EBUSY }
+
 // Remount mounts every storage again, including ejected ones.
 func (m *Manager) Remount(ctx context.Context, r remote.Remote) error {
 	m.mu.Lock()
@@ -115,9 +145,7 @@ func (m *Manager) logf(format string, args ...any) {
 
 // MountAll mounts the storages of the connected phone that aren't mounted yet.
 func (m *Manager) MountAll(ctx context.Context, r remote.Remote) error {
-	v := vfs.New(r)
-	v.DeviceName = r.Device().Model
-	storages, err := v.Storages(ctx)
+	storages, err := remote.NewFS(r).Storages(ctx)
 	if err != nil {
 		return err
 	}

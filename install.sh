@@ -22,10 +22,60 @@ FUSE_T_LIB=/usr/local/lib/libfuse-t.dylib
 step() { printf '\n\033[1;32m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# The banner: the app icon in coloured dots (rows from
+# macos/Design/tools/banner.py: a hex colour per dot, "." for none).
+BANNER_ROWS=(
+  ". . . . . . 507d38 4f7b37 4d7836 . . . . . ."
+  ". . . . . 4e7e36 528136 5f8c3b 4f7d34 487431 . . . . ."
+  ". . . . 517a39 689341 a9c95e adcc60 a7c85c 648d3d 486d33 . . . ."
+  ". . . . 537d39 b0cd68 bbd66e bbd56e b8d36b aac961 487131 . . . ."
+  ". . . . 739a49 c6dd79 c9df7c c9df7c c5dc78 bfd872 6b9043 . . . ."
+  ". . . 4c7337 97b661 d3e687 d6e88a d6e889 d2e585 cbe07e 91b05a 40622e . . ."
+  ". . . 507a36 cee185 dbeb92 ddec95 ddec95 dbeb91 d6e889 c5db7b 466c30 . . ."
+  ". . 487033 9db967 ddec95 e0ed9c e2eea0 e2eea0 dfed9b dceb93 d4e788 96b25e 385a28 . ."
+  ". 4a6e35 6e9349 dbeb91 e0ee9d e5f0a6 e7f1ab e7f1aa e4efa4 dfed9b daea8f cee281 648540 375429 ."
+  ". 4b7533 c7db80 deec97 e3efa4 d8d697 ba9f6a ab8957 ad935e cccc86 dcec94 d3e686 b8d170 3b5e28 ."
+  "466b32 7fa152 d8e98c dfed9a cdc584 a8794d b18155 a27042 8f5d32 7e4f28 bab670 d5e789 c5dc78 739245 304c24"
+  "43692f a2bd66 d8e98d dfed9b 9e7645 9f7550 916e4e 825b39 704927 724623 77542c d5e789 c5dc78 95b257 2d4921"
+  "40672d aac46a d7e88b deec99 88572e 422a16 6c5338 73593d 70573b 382211 653d1d cddd81 c4dc77 9dbb5b 2a471e"
+  "3f632d 9ab760 d4e787 ddec95 8d6a3c 794c27 6c4323 694121 633c1e 643d1d 6f512a d1e484 c1da74 8eac52 29431e"
+  "3d602c 6f9146 cee381 daea8f c4c57d 744c27 704421 6d4320 663e1e 634120 b8bc6e cbe17e bcd66f 64833b 26411d"
+  ". 396027 b0c96d d4e687 dbeb91 d1da8b a2985d 8f7e4b 9b9257 cad581 d1e484 c4dc77 a4c15f 29481c ."
+  ". 375827 45692e b0c86e d4e687 d9ea8e dbeb91 dbeb90 d8e98c d2e585 c7de7a a5c062 395724 233d1a ."
+  ". . 325324 305421 5e7d3d 839d54 95ae60 9ab263 92ab5d 7c974e 557235 244319 213d19 . ."
+  ". . . . 2e4b22 2b4920 29471e 2c4322 26421c 25401b 253e1c . . . ."
+)
+
+# banner prints the logo under a grey title, on colour terminals only: not when
+# the output is piped or logged, with NO_COLOR set, or on a dumb terminal.
+banner() {
+  [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]] || return 0
+  local truecolor=0 row dot line r g b
+  [[ "${COLORTERM:-}" == truecolor || "${COLORTERM:-}" == 24bit ]] && truecolor=1
+  printf '\n  \033[38;5;245mAvocadoMTP installer\033[0m\n\n'
+  for row in "${BANNER_ROWS[@]}"; do
+    line="  "
+    for dot in $row; do
+      if [[ "$dot" == . ]]; then
+        line+="  "
+        continue
+      fi
+      r=$((16#${dot:0:2})) g=$((16#${dot:2:2})) b=$((16#${dot:4:2}))
+      if ((truecolor)); then
+        line+=$(printf '\033[38;2;%d;%d;%dm● ' "$r" "$g" "$b")
+      else # nearest colour of the 256-colour cube
+        line+=$(printf '\033[38;5;%dm● ' $((16 + 36 * ((r * 5 + 127) / 255) + 6 * ((g * 5 + 127) / 255) + (b * 5 + 127) / 255)))
+      fi
+    done
+    printf '%s\033[0m\n' "$line"
+  done
+}
+
 # Everything runs inside main, so `curl | bash` reads the whole script before any
 # command (brew, git) can consume the rest of stdin.
 main() {
   [[ "$(uname -s)" == Darwin ]] || fail "AvocadoMTP runs on macOS only."
+  banner
   find_brew
 
   case "${1:-}" in

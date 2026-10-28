@@ -36,6 +36,17 @@ func (e *Error) Unwrap() error {
 	return syscall.Errno(errcode.FromName(e.Code))
 }
 
+// withErrno gives err a POSIX code for the client without changing its message.
+func withErrno(err error, code syscall.Errno) error { return &errnoError{err, code} }
+
+type errnoError struct {
+	err  error
+	code syscall.Errno
+}
+
+func (e *errnoError) Error() string   { return e.err.Error() }
+func (e *errnoError) Unwrap() []error { return []error{e.err, e.code} }
+
 func errResponse(err error) Response {
 	return Response{OK: false, Error: err.Error(), Code: codeOf(err)}
 }

@@ -17,6 +17,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var devServiceInstalled = false
     @Published private(set) var volumes = ServiceControl.Status.Volumes.unknown
     @Published private(set) var cliOnPath = true
+    /// A newer release than this app, when GitHub has one.
+    @Published private(set) var update: UpdateChecker.Release?
+    private var updateTimer: Timer?
 
     var installed: Bool { ServiceControl.isInstalled }
     var canInstallService: Bool { ServiceControl.helper != nil }
@@ -31,6 +34,7 @@ final class AppModel: ObservableObject {
             await setUpService()
             registerLoginItemByDefault()
         }
+        startUpdateChecks()
     }
 
     /// Runs once at launch: installs the service from the bundled helper if
@@ -173,6 +177,51 @@ final class AppModel: ObservableObject {
 
     func mountAll() {
         perform { try DaemonConnection().call(["op": "mount"]) }
+    }
+
+    /// Gives a volume the user's name; an empty name goes back to the phone's.
+    func rename(_ mount: ActivityState.Mount, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard name != mount.name else { return }
+        perform {
+            try DaemonConnection().call(["op": "renameVolume", "storage": mount.storageId, "name": name])
+        }
+    }
+
+    // MARK: Updates
+
+    /// Checks GitHub for a newer release now and then once a day: one small
+    /// HTTPS request, nothing while it waits.
+    private func startUpdateChecks() {
+        checkForUpdate()
+        let timer = Timer(timeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForUpdate() }
+        }
+        timer.tolerance = 60 * 60
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
+    private func checkForUpdate() {
+        Task {
+            let latest = await UpdateChecker.latest()
+            guard let latest else { return } // offline or rate-limited: try again tomorrow
+            update = ServiceControl.isOlder(UpdateChecker.currentVersion, than: latest.version) ? latest : nil
+        }
+    }
+
+    /// Runs the update in Terminal, so the user sees its progress and any
+    /// password prompt: Homebrew's upgrade for a cask install, the installer otherwise.
+    func installUpdate() {
+        do {
+            try UpdateChecker.openUpdateInTerminal()
+        } catch {
+            message = "Couldn't start the update: " + error.localizedDescription
+        }
+    }
+
+    func openReleaseNotes() {
+        if let url = update?.page { NSWorkspace.shared.open(url) }
     }
 
     /// Shows the volume in Finder. Never `open` it: a storage named like a

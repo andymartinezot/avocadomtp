@@ -73,9 +73,8 @@ func (f *FS) debugf(format string, args ...any) {
 
 // New returns the file system for one storage. tmpDir holds files being written.
 func New(r remote.Remote, storageName string, storageID uint32, tmpDir string) *FS {
-	v := vfs.New(r)
-	v.TTL = 3 * time.Second         // pick up changes made on the phone
-	v.DeviceName = r.Device().Model // same storage names as the manager
+	v := remote.NewFS(r)    // same storage names as the manager
+	v.TTL = 3 * time.Second // pick up changes made on the phone
 	return &FS{
 		r: r, vfs: v, storage: storageName, storageID: storageID, tmpDir: tmpDir,
 		uid: uint32(os.Getuid()), gid: uint32(os.Getgid()),

@@ -64,6 +64,9 @@ type FS struct {
 	// DeviceName, if set, replaces generic internal-storage descriptions
 	// ("Internal shared storage") so the volume is named after the phone.
 	DeviceName string
+	// Custom holds names the user gave storages (by storage ID); they win
+	// over the phone's names. See internal/volnames.
+	Custom map[uint32]string
 }
 
 type dirEntry struct {
@@ -89,13 +92,20 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{} // case- and normalization-insensitive, like APFS
-	var out []*Storage
-	for _, id := range ids {
-		info, err := f.b.StorageInfo(ctx, id)
-		if err != nil {
+	infos := make([]*ptp.StorageInfo, len(ids))
+	fixed := 0
+	for i, id := range ids {
+		if infos[i], err = f.b.StorageInfo(ctx, id); err != nil {
 			return nil, err
 		}
+		if isFixed(infos[i]) {
+			fixed++
+		}
+	}
+	seen := map[string]bool{} // case- and normalization-insensitive, like APFS
+	var out []*Storage
+	for i, id := range ids {
+		info := infos[i]
 		name := storageName(info.Description)
 		if name == "" {
 			name = storageName(info.VolumeLabel)
@@ -104,14 +114,18 @@ func (f *FS) storagesLocked(ctx context.Context) ([]*Storage, error) {
 			name = fmt.Sprintf("Storage %08X", id)
 		}
 		alias := name
-		if dev := storageName(f.DeviceName); dev != "" && isGenericInternal(name) {
+		// The phone's only built-in storage is named after the phone, whatever
+		// language its description is in ("Almacenamiento interno compartido").
+		if dev := storageName(f.DeviceName); dev != "" && (isGenericInternal(name) || fixed == 1 && isFixed(info)) {
 			name = dev
 		}
-		key := func(s string) string { return cases.Fold().String(norm.NFC.String(s)) }
-		for base, n := name, 2; seen[key(name)]; n++ {
+		if c := f.Custom[id]; c != "" && CheckVolumeName(c) == nil {
+			name = c
+		}
+		for base, n := name, 2; seen[nameKey(name)]; n++ {
 			name = fmt.Sprintf("%s (%d)", base, n)
 		}
-		seen[key(name)] = true
+		seen[nameKey(name)] = true
 		out = append(out, &Storage{ID: id, Name: name, Alias: alias, Info: info})
 	}
 	f.storages = out
@@ -201,6 +215,39 @@ func validObjects(objs []*mtp.Object) ([]*mtp.Object, int) {
 		return out, len(objs) - len(out)
 	}
 	return objs, 0
+}
+
+// isFixed reports storages built into the phone (not an SD card).
+func isFixed(info *ptp.StorageInfo) bool {
+	return info.StorageType == ptp.StorageFixedROM || info.StorageType == ptp.StorageFixedRAM
+}
+
+// nameKey folds case and Unicode normalization, the way APFS compares names.
+func nameKey(s string) string { return cases.Fold().String(norm.NFC.String(s)) }
+
+// SameName reports whether two volume names would collide on APFS.
+func SameName(a, b string) bool { return nameKey(a) == nameKey(b) }
+
+// MaxVolumeName is the longest name, in bytes, the user may give a volume.
+const MaxVolumeName = 100
+
+// CheckVolumeName validates a name the user wants to give a volume: it must
+// be usable as one path component (ValidName), not hidden, at most
+// MaxVolumeName bytes, and without "/" or ":" (Finder shows one as the other).
+func CheckVolumeName(s string) error {
+	switch {
+	case s != strings.TrimSpace(s) || s == "":
+		return fmt.Errorf("a volume name can't be empty or start or end with spaces")
+	case len(s) > MaxVolumeName:
+		return fmt.Errorf("a volume name can be at most %d bytes", MaxVolumeName)
+	case strings.ContainsAny(s, "/:"):
+		return fmt.Errorf("a volume name can't contain / or :")
+	case strings.HasPrefix(s, "."):
+		return fmt.Errorf("a volume name can't start with a dot")
+	case !ValidName(s):
+		return fmt.Errorf("a volume name can't contain control or invisible formatting characters")
+	}
+	return nil
 }
 
 // isGenericInternal reports descriptions that name the phone's built-in

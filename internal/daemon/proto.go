@@ -55,6 +55,9 @@ const (
 	OpWatch    = "watch" // stream activity snapshots (menu bar)
 	OpEject    = "eject" // unmount one storage (Request.Storage)
 	OpMount    = "mount" // mount all storages again, including ejected ones
+	// OpRenameVolume names a storage's volume (Request.Storage, Request.Name;
+	// an empty name restores the default) and remounts it.
+	OpRenameVolume = "renameVolume"
 )
 
 // Request is a client request. Handle 0xFFFFFFFF (with Storage) is a storage root.

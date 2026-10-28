@@ -3,6 +3,10 @@ import SwiftUI
 /// The window that opens from the menu bar icon.
 struct MenuView: View {
     @ObservedObject var model: AppModel
+    /// The volume being renamed inline, and the name typed so far.
+    @State private var renaming: UInt32?
+    @State private var draft = ""
+    @FocusState private var nameFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -71,6 +75,21 @@ struct MenuView: View {
 
     /// Shown only when something is missing; empty when all is well.
     @ViewBuilder private var checklist: some View {
+        if let update = model.update {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("AvocadoMTP \(update.version) is available.", systemImage: "arrow.down.app")
+                    .font(.callout)
+                HStack {
+                    Button("Update", action: model.installUpdate)
+                        .help(UpdateChecker.installedByHomebrew
+                              ? "Runs brew upgrade in Terminal"
+                              : "Runs the installer in Terminal")
+                    Button("Release notes", action: model.openReleaseNotes)
+                        .buttonStyle(.link)
+                }
+                .controlSize(.small)
+            }
+        }
         if model.volumes == .unavailable {
             setupRow("Finder volumes need FUSE-T (free).", icon: "externaldrive.badge.xmark",
                      action: "Get FUSE-T", model.openFUSETDownload)
@@ -96,13 +115,23 @@ struct MenuView: View {
 
     private func phone(_ st: ActivityState) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: st.connected ? "iphone.gen3" : "iphone.gen3.slash")
+            Image(systemName: st.connected ? "iphone.gen3" : st.asleep == true ? "moon.zzz" : "iphone.gen3.slash")
                 .font(.title2)
                 .foregroundStyle(st.connected ? Color.accentColor : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 if st.connected, let d = st.device {
                     Text(d.model).font(.body.weight(.semibold))
                     Text(d.manufacturer).font(.caption).foregroundStyle(.secondary)
+                } else if st.asleep == true {
+                    Text("Your phone isn't answering").font(.body.weight(.semibold))
+                    Text("Unlock it. If it stays like this, unplug the cable and plug it in again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Try again") { model.mountAll() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(model.busy)
                 } else {
                     Text("No phone connected").font(.body.weight(.semibold))
                     Text("Unlock it and choose “File transfer” in its USB notification.")
@@ -148,20 +177,32 @@ struct MenuView: View {
             ForEach(st.mounts) { m in
                 HStack(spacing: 8) {
                     Image(systemName: "externaldrive.fill").foregroundStyle(.secondary)
-                    Button {
-                        model.reveal(m)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(m.name).foregroundStyle(.primary)
-                            Text(m.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                    if renaming == m.storageId {
+                        TextField("Name", text: $draft)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($nameFieldFocused)
+                            .onSubmit {
+                                model.rename(m, to: draft)
+                                renaming = nil
+                            }
+                            .onExitCommand { renaming = nil }
+                            .help("Return saves, Esc cancels. Empty goes back to the phone's name.")
+                    } else {
+                        Button {
+                            model.reveal(m)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.name).foregroundStyle(.primary)
+                                Text(m.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .help("Open in Finder · right-click to rename")
                     }
-                    .buttonStyle(.plain)
-                    .help("Open in Finder")
                     Spacer()
                     Button {
                         model.eject(m)
@@ -171,6 +212,17 @@ struct MenuView: View {
                     .buttonStyle(.borderless)
                     .disabled(model.busy)
                     .help("Eject \(m.name)")
+                }
+                .contextMenu {
+                    Button("Rename…") {
+                        draft = m.name
+                        renaming = m.storageId
+                        DispatchQueue.main.async { nameFieldFocused = true } // once the field exists
+                    }
+                    Button("Use the Phone's Name") { model.rename(m, to: "") }
+                    Divider()
+                    Button("Show in Finder") { model.reveal(m) }
+                    Button("Eject") { model.eject(m) }
                 }
             }
         }

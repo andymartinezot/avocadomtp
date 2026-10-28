@@ -11,6 +11,7 @@ import (
 
 	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/daemon"
+	"github.com/andymartinezot/avocadomtp/internal/vfs"
 )
 
 func needDaemon(err error) error {
@@ -117,6 +118,47 @@ func ejectCmd(args []string) error {
 		}
 	}
 	return fmt.Errorf("no mounted volume named %q (see avocadomtp daemon status)", args[0])
+}
+
+// volumeCmd renames a volume or resets it to the phone's name.
+func volumeCmd(args []string) error {
+	var name string
+	switch {
+	case len(args) == 3 && args[0] == "rename":
+		name = args[2]
+	case len(args) == 2 && args[0] == "reset":
+	default:
+		return errors.New("usage: avocadomtp volume rename VOLUME NAME | volume reset VOLUME")
+	}
+	c, err := daemon.Dial(daemon.DefaultSocketPath())
+	if err != nil {
+		return needDaemon(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+	st, err := c.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if !st.Connected {
+		return errors.New("no phone connected")
+	}
+	want := strings.Trim(args[1], "/")
+	for _, s := range st.Storages {
+		if !vfs.SameName(s.Name, want) && !vfs.SameName(s.Description, want) {
+			continue
+		}
+		if err := c.RenameVolume(ctx, s.ID, name); err != nil {
+			return err
+		}
+		if name == "" {
+			fmt.Printf("%s: back to the phone's name\n", vfs.Printable(s.Name))
+		} else {
+			fmt.Printf("%s is now %s\n", vfs.Printable(s.Name), name)
+		}
+		return nil
+	}
+	return fmt.Errorf("no volume named %q (see avocadomtp daemon status)", vfs.Printable(args[1]))
 }
 
 // mountCmd mounts every storage again.

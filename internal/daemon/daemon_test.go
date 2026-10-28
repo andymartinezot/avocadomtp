@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math/rand"
 	"os"
@@ -37,6 +38,7 @@ type harness struct {
 	socket  string
 	mu      sync.Mutex
 	present bool
+	openErr error // returned by Open while set
 	opens   int
 }
 
@@ -54,6 +56,9 @@ func startWith(t *testing.T, present bool, changes <-chan struct{}) *harness {
 	srv := &Server{Poll: 50 * time.Millisecond, Changes: changes, Hub: activity.NewHub(), Open: func() (Phone, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if h.openErr != nil {
+			return nil, h.openErr
+		}
 		if !h.present {
 			return nil, device.ErrNoDevice
 		}
@@ -365,5 +370,77 @@ func TestEjectAndMountOps(t *testing.T) {
 	}
 	if err := c.Remount(ctx); err != nil || !remounted {
 		t.Fatalf("mount: %v", err)
+	}
+}
+
+func TestRenameVolume(t *testing.T) {
+	t.Setenv("AVOCADOMTP_VOLUME_NAMES", filepath.Join(t.TempDir(), "names.json"))
+	h := start(t, true)
+	c := dial(t, h)
+	ctx := context.Background()
+	var renamed []uint32
+	var refuse error
+	h.srv.Renamed = func(id uint32) error { renamed = append(renamed, id); return refuse }
+	name := func() string {
+		st, err := c.Status(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Storages[0].Name
+	}
+
+	if err := c.RenameVolume(ctx, internal, "Games"); err != nil || name() != "Games" || len(renamed) != 1 {
+		t.Fatalf("rename: %v, name %q, remounts %v", err, name(), renamed)
+	}
+	for bad, code := range map[string]syscall.Errno{"sd CARD": syscall.EEXIST, "../x": syscall.EINVAL, ".x": syscall.EINVAL} {
+		if err := c.RenameVolume(ctx, internal, bad); !errors.Is(err, code) {
+			t.Errorf("rename to %q: %v, want %v", bad, err, code)
+		}
+	}
+	if err := c.RenameVolume(ctx, 0x00990001, "X"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("unknown storage: %v", err)
+	}
+
+	// A volume that can't be unmounted keeps its old name.
+	refuse = syscall.EBUSY
+	if err := c.RenameVolume(ctx, internal, "Other"); !errors.Is(err, syscall.EBUSY) || name() != "Games" {
+		t.Fatalf("busy remount: %v, name %q", err, name())
+	}
+	refuse = nil
+
+	// So does one with a copy running on it.
+	tr := h.srv.Hub.Begin("Games/a.bin", activity.ToPhone, 10)
+	if err := c.RenameVolume(ctx, internal, "Other"); !errors.Is(err, syscall.EBUSY) {
+		t.Fatalf("rename during a transfer: %v", err)
+	}
+	tr.End(nil)
+
+	if err := c.RenameVolume(ctx, internal, ""); err != nil || name() != "Phone" {
+		t.Fatalf("reset: %v, name %q", err, name())
+	}
+}
+
+func TestAsleepPhone(t *testing.T) {
+	h := start(t, false) // nothing to connect to until openErr is set
+	h.mu.Lock()
+	h.openErr = fmt.Errorf("Phone is not responding: %w", device.ErrNotResponding)
+	h.mu.Unlock()
+	c := dial(t, h)
+	ctx := context.Background()
+	if st, _ := c.Status(ctx); st.Connected {
+		t.Fatal("must not be connected")
+	}
+	if snap := h.srv.Hub.Snapshot(); !snap.Asleep || snap.Connected {
+		t.Fatalf("snapshot %+v, want asleep", snap)
+	}
+	h.mu.Lock()
+	h.openErr, h.present = nil, true
+	h.mu.Unlock()
+	time.Sleep(1100 * time.Millisecond) // past the retry back-off
+	if st, err := c.Status(ctx); err != nil || !st.Connected {
+		t.Fatalf("status after waking: %+v %v", st, err)
+	}
+	if snap := h.srv.Hub.Snapshot(); snap.Asleep || !snap.Connected {
+		t.Fatalf("snapshot %+v, want connected", snap)
 	}
 }

@@ -48,9 +48,7 @@ func connect(serial string, direct bool) (*client, error) {
 }
 
 func newClient(r remote.Remote, via string) *client {
-	v := vfs.New(r)
-	v.DeviceName = r.Device().Model
-	return &client{r: r, fs: v, via: via}
+	return &client{r: r, fs: remote.NewFS(r), via: via}
 }
 
 func (c *client) close() {

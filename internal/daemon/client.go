@@ -271,6 +271,12 @@ func (c *Client) Eject(ctx context.Context, storage uint32) error {
 	return err
 }
 
+// RenameVolume names a storage's volume; an empty name restores the default.
+func (c *Client) RenameVolume(ctx context.Context, storage uint32, name string) error {
+	_, err := c.simple(ctx, &Request{Op: OpRenameVolume, Storage: storage, Name: name})
+	return err
+}
+
 // Remount mounts every storage again, including ejected ones.
 func (c *Client) Remount(ctx context.Context) error {
 	_, err := c.simple(ctx, &Request{Op: OpMount})

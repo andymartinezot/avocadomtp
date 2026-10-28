@@ -57,6 +57,14 @@ func (di *DeviceInfo) Supports(op uint16) bool {
 	return false
 }
 
+// Storage types (StorageInfo.StorageType).
+const (
+	StorageFixedROM     = 0x0001
+	StorageRemovableROM = 0x0002
+	StorageFixedRAM     = 0x0003
+	StorageRemovableRAM = 0x0004
+)
+
 // StorageInfo is the GetStorageInfo dataset.
 type StorageInfo struct {
 	StorageType        uint16

@@ -45,6 +45,7 @@ type State struct {
 	Connected bool               `json:"connected"`
 	Device    *remote.DeviceInfo `json:"device,omitempty"`
 	Error     string             `json:"error,omitempty"`
+	Asleep    bool               `json:"asleep,omitempty"` // plugged in but not answering
 	Mounts    []Mount            `json:"mounts"`
 	Transfers []TransferInfo     `json:"transfers"`
 	RateIn    int64              `json:"rateIn"`  // bytes/s from the phone
@@ -62,6 +63,7 @@ type Hub struct {
 	connected bool
 	device    *remote.DeviceInfo
 	errMsg    string
+	asleep    bool
 	mounts    []Mount
 	transfers []*Transfer
 	nextID    uint64
@@ -134,13 +136,14 @@ func (h *Hub) Begin(path, direction string, total int64) *Transfer {
 	return t
 }
 
-// SetPhone records the connection state.
-func (h *Hub) SetPhone(connected bool, dev *remote.DeviceInfo, errMsg string) {
+// SetPhone records the connection state. asleep means a phone is plugged in
+// but doesn't answer.
+func (h *Hub) SetPhone(connected bool, dev *remote.DeviceInfo, errMsg string, asleep bool) {
 	if h == nil {
 		return
 	}
 	h.mu.Lock()
-	h.connected, h.device, h.errMsg = connected, dev, errMsg
+	h.connected, h.device, h.errMsg, h.asleep = connected, dev, errMsg, asleep
 	h.mu.Unlock()
 	h.publish()
 }
@@ -167,7 +170,7 @@ func (h *Hub) Snapshot() State {
 }
 
 func (h *Hub) snapshotLocked() State {
-	st := State{Seq: h.seq, Connected: h.connected, Device: h.device, Error: h.errMsg,
+	st := State{Seq: h.seq, Connected: h.connected, Device: h.device, Error: h.errMsg, Asleep: h.asleep,
 		Mounts: append([]Mount{}, h.mounts...), Transfers: []TransferInfo{}, RateIn: h.rateIn, RateOut: h.rateOut}
 	for _, t := range h.transfers {
 		st.Transfers = append(st.Transfers, TransferInfo{

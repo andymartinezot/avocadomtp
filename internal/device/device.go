@@ -75,13 +75,22 @@ func (d *Device) open() error {
 	}
 	if err != nil {
 		if stuck(err) {
-			return fmt.Errorf("%s is not responding: %w (wake the phone up; if it stays stuck, unplug and reconnect it)", cand, err)
+			return &notResponding{fmt.Errorf("%s is not responding: %w (wake the phone up; if it stays stuck, unplug and reconnect it)", cand, err)}
 		}
 		return fmt.Errorf("start MTP session with %s: %w (is the phone unlocked?)", cand, err)
 	}
 	d.Session = s
 	return nil
 }
+
+// ErrNotResponding matches (errors.Is) an open that failed because the phone
+// is connected but doesn't answer, typically asleep after a long idle time.
+var ErrNotResponding = errors.New("the phone is not responding")
+
+type notResponding struct{ err error }
+
+func (e *notResponding) Error() string   { return e.err.Error() }
+func (e *notResponding) Unwrap() []error { return []error{e.err, ErrNotResponding} }
 
 // stuck reports USB errors that mean the device stopped responding.
 func stuck(err error) bool {

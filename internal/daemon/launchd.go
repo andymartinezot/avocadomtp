@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/andymartinezot/avocadomtp/internal/volnames"
 )
 
 // Label is the LaunchAgent label.
@@ -146,6 +148,7 @@ func Start() error {
 		if autostartEnabled() && !staleMarker() {
 			// The user turned autostart on meanwhile (SetAutostart): keep it.
 			_ = os.Remove(autostartMarker())
+			_ = os.Remove(volnames.Path())
 		} else {
 			_ = launchctl("enable", service())
 			defer RestoreAutostart()

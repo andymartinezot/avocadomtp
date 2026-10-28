@@ -35,6 +35,8 @@ Commands:
   watch                           live view: phone, mounts, transfers and speed
   eject STORAGE | --all           unmount one or every Finder volume (until "mount" or reconnect)
   mount                           mount all Finder volumes again
+  volume rename VOLUME NAME       give a volume your own name (kept on this Mac, per phone)
+  volume reset VOLUME             go back to the phone's name for it
   uninstall                       remove the service and the menu bar app (keeps your phone's files)
   version                         print the version
 
@@ -88,6 +90,8 @@ func runMain(serial string, direct bool, args []string) error {
 		return ejectCmd(args[1:])
 	case "mount":
 		return mountCmd()
+	case "volume":
+		return volumeCmd(args[1:])
 	case "uninstall":
 		return uninstallAll()
 	case "version":

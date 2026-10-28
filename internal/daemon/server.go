@@ -11,15 +11,19 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/andymartinezot/avocadomtp/internal/activity"
 	"github.com/andymartinezot/avocadomtp/internal/bufpool"
+	"github.com/andymartinezot/avocadomtp/internal/device"
 	"github.com/andymartinezot/avocadomtp/internal/mtp"
 	"github.com/andymartinezot/avocadomtp/internal/ptp"
 	"github.com/andymartinezot/avocadomtp/internal/remote"
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
+	"github.com/andymartinezot/avocadomtp/internal/volnames"
 )
 
 // Phone is what the server needs from a connected device (*device.Device).
@@ -49,6 +53,8 @@ type Server struct {
 	// Eject and Remount implement the "eject" and "mount" operations (may be nil).
 	Eject   func(storageID uint32) error
 	Remount func() error
+	// Renamed remounts a storage after its name changed (may be nil).
+	Renamed func(storageID uint32) error
 	events  chan bool
 
 	mu       sync.RWMutex // write-locked only to swap the phone
@@ -252,7 +258,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 		if err != nil {
 			if s.lastErr == nil || err.Error() != s.lastErr.Error() {
 				s.logf("phone not available: %v", firstLine(err))
-				s.Hub.SetPhone(false, nil, firstLine(err))
+				s.Hub.SetPhone(false, nil, firstLine(err), errors.Is(err, device.ErrNotResponding))
 			}
 			s.lastErr = err
 			s.mu.Unlock()
@@ -261,7 +267,7 @@ func (s *Server) acquire() (Phone, func(), error) {
 		s.phone, s.lastErr = p, nil
 		d := p.Device()
 		s.logf("connected: %s %s (serial %s)", d.Manufacturer, d.Model, d.Serial)
-		s.Hub.SetPhone(true, &d, "")
+		s.Hub.SetPhone(true, &d, "", false)
 		s.emit(true)
 	}
 	s.mu.Unlock()
@@ -282,7 +288,7 @@ func (s *Server) drop(p Phone) {
 	}
 	s.phone.Close()
 	s.phone = nil
-	s.Hub.SetPhone(false, nil, "")
+	s.Hub.SetPhone(false, nil, "", false)
 	s.emit(false)
 	if !s.closing && s.kick != nil {
 		go func() {
@@ -397,6 +403,12 @@ func (s *Server) dispatch(ctx context.Context, p Phone, req *Request, w *bufio.W
 			return fail(&Error{Code: "ENOTSUP", Msg: "this daemon doesn't mount volumes"})
 		}
 		if err := s.Remount(); err != nil {
+			return fail(err)
+		}
+		return ok, nil
+
+	case OpRenameVolume:
+		if err := s.renameVolume(ctx, p, req.Storage, req.Name); err != nil {
 			return fail(err)
 		}
 		return ok, nil
@@ -607,10 +619,64 @@ func uploadChunked(ctx context.Context, p Phone, req *Request, r io.Reader) (uin
 	return h, nil
 }
 
+// renameVolume gives a storage a name of the user's choice (name "" goes back
+// to the default) and remounts it under that name. The name is stored on the
+// Mac only. It's refused while a transfer runs on the volume, and undone if
+// the volume can't be remounted (e.g. files are open on it).
+func (s *Server) renameVolume(ctx context.Context, p Phone, id uint32, name string) error {
+	if name != "" {
+		if err := vfs.CheckVolumeName(name); err != nil {
+			return withErrno(err, syscall.EINVAL)
+		}
+	}
+	sts, err := remote.NewFS(p).Storages(ctx)
+	if err != nil {
+		return err
+	}
+	var target *vfs.Storage
+	for _, st := range sts {
+		if st.ID == id {
+			target = st
+		}
+	}
+	if target == nil {
+		return withErrno(fmt.Errorf("no storage %08X on the phone", id), syscall.ENOENT)
+	}
+	for _, st := range sts {
+		if st.ID != id && name != "" && vfs.SameName(st.Name, name) {
+			return withErrno(fmt.Errorf("another volume is already called %s", st.Name), syscall.EEXIST)
+		}
+	}
+	for _, t := range s.Hub.Snapshot().Transfers {
+		if t.State == "active" && (t.Path == target.Name || strings.HasPrefix(t.Path, target.Name+"/")) {
+			return withErrno(fmt.Errorf("%s is busy copying files; try again when it's done", target.Name), syscall.EBUSY)
+		}
+	}
+	d := p.Device()
+	key := volnames.Key(d.Serial, d.Model)
+	old := volnames.Load(key)[id]
+	if old == name {
+		return nil
+	}
+	if err := volnames.Set(key, id, name); err != nil {
+		return err
+	}
+	if s.Renamed != nil {
+		if err := s.Renamed(id); err != nil {
+			_ = volnames.Set(key, id, old)
+			return err
+		}
+	}
+	if name == "" {
+		s.logf("volume %s: back to the phone's name", vfs.Printable(target.Name))
+	} else {
+		s.logf("renamed volume %s to %s", vfs.Printable(target.Name), vfs.Printable(name))
+	}
+	return nil
+}
+
 func storagesOf(ctx context.Context, p Phone) ([]Storage, error) {
-	v := vfs.New(p)
-	v.DeviceName = p.Device().Model
-	sts, err := v.Storages(ctx)
+	sts, err := remote.NewFS(p).Storages(ctx)
 	if err != nil {
 		return nil, err
 	}

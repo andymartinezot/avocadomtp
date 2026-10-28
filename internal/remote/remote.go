@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/andymartinezot/avocadomtp/internal/vfs"
+	"github.com/andymartinezot/avocadomtp/internal/volnames"
 )
 
 // DeviceInfo describes the connected phone.
@@ -36,4 +37,14 @@ type Remote interface {
 	// Healthy restores the connection after an aborted transfer.
 	Healthy() error
 	Close()
+}
+
+// NewFS returns a path resolver for r that names volumes the way every part
+// of AvocadoMTP shows them: the user's names first, then the phone's.
+func NewFS(r Remote) *vfs.FS {
+	d := r.Device()
+	v := vfs.New(r)
+	v.DeviceName = d.Model
+	v.Custom = volnames.Load(volnames.Key(d.Serial, d.Model))
+	return v
 }

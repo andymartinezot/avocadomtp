@@ -49,9 +49,20 @@ bar app with the service inside. Then it:
   link);
 - puts `AvocadoMTP.app` in `/Applications` and starts the service.
 
-No Xcode, Go or libusb needed. Run it again to update. You can also download `AvocadoMTP.zip` from the
+No Xcode, Go or libusb needed. Run it again to update; the menu bar app also tells you when a new
+version is out and runs this for you ("Update"). You can also download `AvocadoMTP.zip` from the
 releases page yourself: the app isn't notarized, so macOS asks once for **System Settings → Privacy &
 Security → Open Anyway**.
+
+**With Homebrew:**
+
+```sh
+brew tap andymartinezot/avocadomtp https://github.com/andymartinezot/avocadomtp
+brew install --cask avocadomtp     # then open AvocadoMTP once: it sets up the service
+brew upgrade --cask avocadomtp     # update
+```
+
+The cask also installs FUSE-T and puts `avocadomtp` on your `PATH`.
 
 > **What you're trusting:** releases are built by GitHub Actions from this repository and are ad-hoc
 > signed (no paid Apple certificate). The installer downloads over HTTPS only and checks the sha256
@@ -309,10 +320,13 @@ avocadomtp watch                                  # live: phone, volumes, transf
 avocadomtp eject Retroid6                         # unmount one volume (until mount/reconnect)
 avocadomtp eject --all                            # unmount every volume (safe to unplug)
 avocadomtp mount                                  # mount all volumes again
+avocadomtp volume rename Retroid6 "SD card"       # your own name for a volume (kept on this Mac)
+avocadomtp volume reset "SD card"                 # back to the phone's name
 ```
 
-- Remote paths start with the storage name. The internal storage is named after the phone
-  (`Retroid Pocket 6`); the phone's own description (`Internal shared storage`) works too.
+- Remote paths start with the storage name. The phone's built-in storage is named after the phone
+  (`Retroid Pocket 6`), in any language; the phone's own description (`Internal shared storage`)
+  works too. Names you give volumes win over both.
 - Flags may appear anywhere; use `--` before a path that starts with `-`. `-d SERIAL` picks a device.
 - When the daemon runs, the CLI goes through it; `--direct` talks to USB instead.
 - In the shell, Ctrl-C cancels a transfer and, at the prompt, quits.
@@ -348,11 +362,12 @@ launchd restarts the daemon if it crashes, never after a deliberate `stop`.
 |---|---|
 | 🥑 icon | outline when idle, filled pit when a phone is connected, total speed while copying |
 | On/off switch | starts or stops the service (`avocadomtp daemon start/stop`) |
-| Phone | model and maker, or how to connect it |
-| Volumes | name and path: click to open in Finder, ⏏ to eject one, "Eject all" before unplugging, "Mount all" to bring them back |
+| Phone | model and maker, or how to connect it; "isn't answering" (with "Try again") when it's plugged in but asleep |
+| Volumes | name and path: click to open in Finder, ⏏ to eject one, "Eject all" before unplugging, "Mount all" to bring them back; right-click → "Rename…" |
 | Transfers | file, direction, progress bar, speed; done / failed |
 | Start at login | one switch for the service's autostart and the menu's own login item |
 | Setup checklist | only when something is missing: FUSE-T not installed, or the FSKit extension off |
+| Update notice | "AvocadoMTP X.Y.Z is available" → Update runs the installer (or `brew upgrade`) in Terminal; checked at launch and once a day |
 | Install command-line tool… | links `avocadomtp` into `/usr/local/bin` (asks for your password once) |
 
 It holds a single `watch` connection: snapshots arrive when something changes, so the app uses no CPU
@@ -379,6 +394,7 @@ Silicon and Intel, as releases do.
 | Behavior | Why |
 |---|---|
 | One volume per storage, in `~/AvocadoMTP/<name>` | `/Volumes` is root-only; Finder still lists them as disks with eject buttons |
+| Rename a volume from the menu (right-click) or `avocadomtp volume rename` | the name is kept on this Mac, per phone and storage, and never written to the phone; it remounts that volume, so close its files first |
 | Writes appear on the phone when the file is closed | MTP can't edit in place; files are staged on the Mac first |
 | `._*`, `.DS_Store` stay on the Mac | kept in memory, never written to the phone |
 | "Move to Trash" deletes immediately | phones have no trash; `.Trashes` is refused on purpose |
@@ -400,6 +416,7 @@ internal/ptp/         PTP/MTP codec
 internal/mtp/         session, operations; mtptest/ = in-memory fake phone
 internal/vfs/         path resolution and directory cache
 internal/remote/      interface shared by direct USB and daemon clients
+internal/volnames/    volume names you choose (stored on the Mac)
 internal/device/      opening the USB phone (with stuck-device recovery)
 internal/daemon/      daemon server, socket protocol, client, LaunchAgent
 internal/fusefs/      FUSE file system, mount manager, metadata shadow store
@@ -407,7 +424,8 @@ internal/errcode/     MTP/USB errors → POSIX errno
 internal/bufpool/     pooled transfer buffers
 macos/                menu bar app (SwiftUI, XcodeGen project.yml)
 scripts/build-app.sh  builds the self-contained app (+ zip)
-install.sh            one-command install from source
+install.sh            one-command install (the release; --from-source builds it)
+Casks/avocadomtp.rb   Homebrew cask (this repository is the tap)
 docs/index.html       interactive architecture & performance page
 ```
 
@@ -426,6 +444,8 @@ laptop:
 3. The workflow builds the universal app with libusb from source (`scripts/build-libusb.sh`), checks
    it, and publishes the release with `AvocadoMTP.zip` and `AvocadoMTP.zip.sha256`. With `gh`
    installed, `release.sh` waits for it and prints the link.
+4. `scripts/update-cask.sh 1.2.3` points `Casks/avocadomtp.rb` at the published release (version and
+   sha256); commit and push it.
 
 Every push to `main` runs the same build and tests without publishing. Users update by running the
 install command again; the new app then updates the service on its first launch.
@@ -441,7 +461,9 @@ touched.
 /Applications/AvocadoMTP.app/Contents/Helpers/avocadomtp uninstall
 ```
 
-If you installed the command-line tool, `avocadomtp uninstall` does the same. If you built from
+If you installed with Homebrew, use `brew uninstall --cask avocadomtp` instead (`--zap` also removes
+settings, custom volume names and the log). If you installed the command-line tool,
+`avocadomtp uninstall` does the same as the command above. If you built from
 source and never installed the app, run `./bin/avocadomtp uninstall` from the clone, then delete the
 clone. Removing the command-line link may ask for your administrator password.
 
@@ -458,7 +480,8 @@ brew uninstall libusb go       # only installed for source builds
 |---|---|
 | `no MTP device found` | Unlock the phone, use a data cable, choose **File transfer** in the USB notification |
 | `claim MTP interface: LIBUSB_ERROR_ACCESS` (or `_OTHER`) | Another app holds the phone (the daemon, Android File Transfer, OpenMTP, MacDroid). macOS's own `ptpcamerad` is stopped automatically |
-| `… is not responding` | Unplug and reconnect, or toggle the phone's USB mode |
+| `… is not responding` / "Your phone isn't answering" | Unlock the phone and click "Try again"; if that doesn't help, unplug and reconnect, or toggle the phone's USB mode |
+| A volume won't rename ("in use") | Close the files and Finder windows on that volume, then rename again |
 | Volumes appear under a "fuse-t" server | Enable fuse-t in File System Extensions (see Quick start) |
 | Daemon doesn't start after a rebuild | Run `avocadomtp daemon install` again (it copies the new binary) |
 
@@ -478,5 +501,7 @@ brew uninstall libusb go       # only installed for source builds
 - [x] Self-contained app: the service inside, set up and updated on launch, no Apple account needed to build
 - [x] Release builds on GitHub Actions: universal app (Apple Silicon + Intel)
 - [x] `install.sh` installs the downloaded app (no Go, Xcode or libusb needed)
-- [ ] Homebrew cask
+- [x] Homebrew cask (this repository is the tap)
+- [x] Rename volumes; built-in storage named after the phone in any language
+- [x] Update notice in the menu bar; "phone isn't answering" notice
 - [ ] Developer ID signing and notarization (no "Open Anyway" for browser downloads)

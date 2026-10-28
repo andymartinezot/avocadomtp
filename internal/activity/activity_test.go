@@ -13,7 +13,7 @@ func TestHubPublishesAndRates(t *testing.T) {
 	if st := <-c; st.Connected || len(st.Transfers) != 0 {
 		t.Fatalf("initial %+v", st)
 	}
-	h.SetPhone(true, nil, "")
+	h.SetPhone(true, nil, "", false)
 	if st := <-c; !st.Connected {
 		t.Fatal("phone event missing")
 	}
@@ -68,7 +68,7 @@ func TestNilHubIsSafe(t *testing.T) {
 	tr := h.Begin("x", FromPhone, 1)
 	tr.Add(1)
 	tr.End(nil)
-	h.SetPhone(true, nil, "")
+	h.SetPhone(true, nil, "", false)
 	if st := h.Snapshot(); st.Connected {
 		t.Fatal("nil hub reported state")
 	}

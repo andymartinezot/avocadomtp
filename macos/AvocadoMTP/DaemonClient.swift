@@ -30,6 +30,9 @@ struct ActivityState: Decodable, Equatable {
     let connected: Bool
     let device: Device?
     let error: String?
+    /// A phone is plugged in but doesn't answer (asleep after a long idle time).
+    /// Optional: older services don't send it.
+    let asleep: Bool?
     let mounts: [Mount]
     let transfers: [Transfer]
     let rateIn: Int64
